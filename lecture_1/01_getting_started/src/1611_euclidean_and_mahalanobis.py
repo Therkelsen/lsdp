@@ -6,8 +6,11 @@ import os
 if __name__ == "__main__":
     input_path = "lecture_1/01_getting_started/output/167/flower_output_yellow_image_hsv.png"
     output_path = "lecture_1/01_getting_started/output/1611/"
-    output_path_graph_euclidean = output_path + "flower_euclidean_distances.png"
-    output_path_graph_mahalanobis = output_path + "flower_mahalanobis_distances.png"
+    output_path_graph_euclidean = output_path + "flower_euclidean_distances_graph.png"
+    output_path_image_euclidean = output_path + "flower_euclidean_distances_image.png"
+    output_path_graph_mahalanobis = output_path + "flower_mahalanobis_distances_graph.png"
+    output_path_image_mahalanobis = output_path + "flower_mahalanobis_distances_image.png"
+    
     
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
@@ -16,6 +19,7 @@ if __name__ == "__main__":
     reference_color = np.array([178, 180, 187], dtype=np.float32)  # Ensure it's float32
     distances_euclidean = []
     distances_mahalanobis = []
+    diff = []
     
     pixel_values = img.reshape(-1, 3).astype(np.float32)  # Flatten image into a list of RGB values
     cov_matrix = np.cov(pixel_values.T)  # Covariance of color channels
@@ -30,6 +34,10 @@ if __name__ == "__main__":
             # Grab the color at the current pixel
             comparison_color = img[i, j]
             comparison_color = comparison_color.astype(np.float32)  # Convert to float32
+            
+            # in a similar script, diff was calculated as diff = pixels - np.repeat([reference_color], shape[0], axis=0)
+            diff = comparison_color - reference_color
+            
             # Euclidean distance
             distance_euclidean = cv2.norm(reference_color, comparison_color, cv2.NORM_L2)
             distances_euclidean.append(distance_euclidean)
@@ -50,6 +58,10 @@ if __name__ == "__main__":
     plt.savefig(output_path_graph_euclidean)
     plt.clf()
     
+    euclidean_dist_image = np.reshape(distances_euclidean, (img.shape[0], img.shape[1]))
+    euclidean_dist_image_scaled = 255 * euclidean_dist_image / np.max(euclidean_dist_image)
+    cv2.imwrite(output_path_image_euclidean, euclidean_dist_image_scaled)
+    
     mean_mahalanobis = np.mean(distances_mahalanobis)
     std_mahalanobis = np.std(distances_mahalanobis)
     print(f"Mean distance: {mean_mahalanobis}")
@@ -60,3 +72,7 @@ if __name__ == "__main__":
     plt.axvline(mean_mahalanobis - std_mahalanobis, color='green', linestyle='dotted', linewidth=2, label=f"Mean - Std: {mean_mahalanobis - std_mahalanobis:.2f}")
     plt.legend()
     plt.savefig(output_path_graph_mahalanobis)
+    
+    mahalanobis_dist_image = np.reshape(distances_mahalanobis, (img.shape[0], img.shape[1]))
+    mahalanobis_dist_image_scaled = 255 * mahalanobis_dist_image / np.max(mahalanobis_dist_image)
+    cv2.imwrite(output_path_image_mahalanobis, mahalanobis_dist_image_scaled)
