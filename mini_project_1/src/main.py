@@ -200,6 +200,70 @@ def plot_color_distribution(image_masked_no_zeros, color_space):
     plt.legend()
     plt.tight_layout()
     plt.show()
+    
+def compare_original_and_segmented_image(original, segmented, title):
+    plt.figure(figsize=(9, 3))
+    ax1 = plt.subplot(1, 2, 1)
+    plt.title(title)
+    ax1.imshow(original)
+    ax2 = plt.subplot(1, 2, 2, sharex=ax1, sharey=ax1)
+    ax2.imshow(segmented)
+    
+def segment_image_by_color_inrange(image, color, tolerance_in_percent, color_space, method="inRange"):
+    lower_bound = None
+    upper_bound = None
+    
+    if color_space == "RGB":
+        tolerance = 255 * tolerance_in_percent / 100
+        lower_bound = color - tolerance
+        upper_bound = color + tolerance
+    elif color_space == "Lab":
+        tolerance = (255 * tolerance_in_percent / 100)
+        
+        l_tolerance = tolerance * (100 / 255)  # L channel ranges from 0 to 100
+        ab_tolerance = tolerance * (128 / 255)  # a/b channels range from -128 to 127
+        
+        lower_bound = np.array([color[0] - l_tolerance, color[1] - ab_tolerance, color[2] - ab_tolerance])
+        upper_bound = np.array([color[0] + l_tolerance, color[1] + ab_tolerance, color[2] + ab_tolerance])
+    else:
+        raise ValueError("Invalid color space. Use 'RGB' or 'Lab'.")
+    
+    return cv.inRange(image, lower_bound, upper_bound)
+
+def segment_image_by_color_distance(image, reference_color, distance_image, threshold, method="Euclidean"):
+    pixels = np.reshape(image, (-1, 3))
+    shape = pixels.shape
+    if method == "Euclidean":
+        # segment pumpkins in RGB space using Euclidean distance and Mahalanobis distance to reference color
+        diff = pixels - np.repeat([reference_color], shape[0], axis=0)
+        euclidean_dist = np.sqrt(np.sum(diff * diff, axis=1))
+        euclidean_dist_image = np.reshape(euclidean_dist, 
+                (image.shape[0], image.shape[1]))
+
+        euclidean_dist_image_scaled = 255 * euclidean_dist_image / np.max(euclidean_dist_image)
+        euclidean_dist_image_scaled = euclidean_dist_image_scaled.astype(np.uint8)
+        
+        segmented_image_euclidean = cv.inRange(euclidean_dist_image_scaled, threshold, 255)
+        return np.max(segmented_image_euclidean) - segmented_image_euclidean
+    elif method == "Mahalanobis":
+        covariance_matrix = np.cov(pixels, rowvar=False)
+        diff = pixels - np.repeat([reference_color], shape[0], axis=0)
+        inv_cov = np.linalg.inv(covariance_matrix)
+        moddotproduct = diff * (diff @ inv_cov)
+        mahalanobis_dist = np.sum(moddotproduct, 
+            axis=1)
+        mahalanobis_distance_image = np.reshape(
+            mahalanobis_dist, 
+                (image.shape[0],
+                image.shape[1]))
+
+        # Scale the distance image and export it.
+        mahalanobis_distance_image = 255 * mahalanobis_distance_image / np.max(mahalanobis_distance_image)
+        mahalanobis_distance_image = mahalanobis_distance_image.astype(np.uint8)
+        segmented_image_mahalanobis = cv.inRange(mahalanobis_distance_image, threshold, 255)
+        return np.max(segmented_image_mahalanobis) - segmented_image_mahalanobis
+    else:
+        raise ValueError("Invalid method. Use 'Euclidean' or 'Mahalanobis'.")
 
 if __name__ == '__main__':
     # orthomosaic_path = "mini_project_1/inputs/segmented_orthomosaic.tif"
@@ -208,7 +272,8 @@ if __name__ == '__main__':
     # with rio.open(orthomosaic_path) as src:
     #     tiles = get_tiles(src, output_path)
     #     print (f'Loaded {tiles} tiles from {orthomosaic_path}')
-
+    
+    # 3.1.1 - Calculate mean, std in RGB and Lab color spaces, visualize color distributions.
     orig_img_bgr = cv.imread("mini_project_1/inputs/image.JPG")
     orig_img_rgb = cv.cvtColor(orig_img_bgr, cv.COLOR_BGR2RGB)
     orig_img_lab = cv.cvtColor(orig_img_bgr, cv.COLOR_BGR2Lab)
@@ -232,33 +297,28 @@ if __name__ == '__main__':
     print("\nPumpkin color (Lab):\nMean:", pumpkin_color_data_lab[2], "\nStd:", pumpkin_color_data_lab[3])
     
     # Plot the color distributions for the pixels selected by annotation
-    plot_color_distribution(pumpkin_color_data_rgb[1], 'RGB')
-    plot_color_distribution(pumpkin_color_data_lab[1], 'Lab')
-    # plot_color_distribution(pumpkin_color_data_lab[1], color_space="Lab")
+    # plot_color_distribution(pumpkin_color_data_rgb[1], 'RGB')
+    # plot_color_distribution(pumpkin_color_data_lab[1], 'Lab')
+
+    # 3.1.2 - Segment pumpkins in RGB and Lab color spaces using inRange and distance in RGB space to reference color
+    small_img_bgr = cv.imread("mini_project_1/inputs/image_small.jpg")
+    small_img_rgb = cv.cvtColor(small_img_bgr, cv.COLOR_BGR2RGB)
+    small_img_lab = cv.cvtColor(small_img_bgr, cv.COLOR_BGR2Lab)
+    tolerance = 10 #percent
     
-    # curr_img = "mini_project_1/outputs/tiles/tile_1.png"
+    segmented_image_rgb = segment_image_by_color_inrange(small_img_rgb, pumpkin_color_data_rgb[2], tolerance, "RGB")
+    compare_original_and_segmented_image(small_img_rgb, segmented_image_rgb, "Segmented Pumpkins RGB")
     
-    # img_file = "mini_project_1/inputs/image_small.jpg"
-
-    # #save_annotations()
-    # pixels_anno = pd.read_csv("mini_project_1/outputs/data_values.csv").to_numpy()
-
-    # cov = np.cov(pixels_anno, rowvar=False)
-    # mean = np.mean(pixels_anno, 0)
-
-    # print("covar:\n", cov)
-    # print("mean:", mean)
-
-    # #visualize_mahala_dist(n_bins=50)
-
-    # #plot_mahalanobis_histogram(img_file, mean, cov)
- 
-    # if True: # create and plot mask
-    #     mask = create_color_mask(img_file, mean, cov, threshold_higher_bound=12, threshold_lower_bound=10)
-    #     mask = cv.normalize(mask, None, 0, 255, cv.NORM_MINMAX).astype('uint8')
-
-    #     cv.imshow("mask", cv.resize(mask, (600,400)))
-    #     cv.imshow("img", cv.resize(cv.imread(img_file), (600,400)))
-    #     cv.waitKey(0)
-
-    #     cv.imwrite("mini_project_1/outputs/mask.PNG", mask)
+    segmented_image_lab = segment_image_by_color_inrange(small_img_lab, pumpkin_color_data_lab[2], tolerance, "Lab")
+    compare_original_and_segmented_image(small_img_rgb, segmented_image_lab, "Segmented Pumpkins Lab")
+    
+    # Euclidean segmentation
+    segmented_image_euclidean = segment_image_by_color_distance(small_img_rgb, pumpkin_color_data_rgb[2], None, 50, "Euclidean")
+    compare_original_and_segmented_image(small_img_rgb, segmented_image_euclidean, "Segmented Pumpkins Euclidean RGB")
+    
+    # Mahalanobis segmentation
+    segmented_image_mahalanobis = segment_image_by_color_distance(small_img_rgb, pumpkin_color_data_rgb[2], None, 20, "Mahalanobis")
+    compare_original_and_segmented_image(small_img_rgb, segmented_image_euclidean, "Segmented Pumpkins Mahalanobis RGB")
+    plt.show(block=False)
+    plt.pause(15)
+    plt.close()
