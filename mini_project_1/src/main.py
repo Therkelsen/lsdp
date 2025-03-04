@@ -341,8 +341,7 @@ if __name__ == '__main__':
     # Derfor tænker jeg ikke det skal bruges
 
 
-    # 3.2.3
-    print("numper of pumpkins:", len(contours))
+    # 3.2.3 - Count orange blobs in filtered image
     print("numper of pumpkins found after erosion:", len(contours_eroded))
 
 
