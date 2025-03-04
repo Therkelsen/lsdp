@@ -297,8 +297,8 @@ if __name__ == '__main__':
     print("\nPumpkin color (Lab):\nMean:", pumpkin_color_data_lab[2], "\nStd:", pumpkin_color_data_lab[3])
     
     # Plot the color distributions for the pixels selected by annotation
-    # plot_color_distribution(pumpkin_color_data_rgb[1], 'RGB')
-    # plot_color_distribution(pumpkin_color_data_lab[1], 'Lab')
+    #plot_color_distribution(pumpkin_color_data_rgb[1], 'RGB')
+    #plot_color_distribution(pumpkin_color_data_lab[1], 'Lab')
 
     # 3.1.2 - Segment pumpkins in RGB and Lab color spaces using inRange and distance in RGB space to reference color
     small_img_bgr = cv.imread("mini_project_1/inputs/image_small.jpg")
@@ -318,7 +318,36 @@ if __name__ == '__main__':
     
     # Mahalanobis segmentation
     segmented_image_mahalanobis = segment_image_by_color_distance(small_img_rgb, pumpkin_color_data_rgb[2], None, 20, "Mahalanobis")
-    compare_original_and_segmented_image(small_img_rgb, segmented_image_euclidean, "Segmented Pumpkins Mahalanobis RGB")
+    compare_original_and_segmented_image(small_img_rgb, segmented_image_mahalanobis, "Segmented Pumpkins Mahalanobis")
     plt.show(block=False)
-    plt.pause(15)
-    plt.close()
+    plt.pause(0.1)
+    plt.close('all')
+
+
+    # 3.2.1 - Count orange plobs
+    contours, hierarchy = cv.findContours(segmented_image_mahalanobis, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    print("numper of pumpkins found:", len(contours))
+
+    
+    # 3.2.2 - Filter segmented image
+    # Jeg forstår ikke hvorfor vi skal filtrere vores segmenterede billede. Det er jå binært...
+    # Derfor laver jeg erosion i stedet for. Det burde minimere mængden bunker af græskar som bliver talt som ét græskar
+    kernel = np.ones((2,2))
+    segmented_image_mahalanobis_eroded = cv.dilate(segmented_image_mahalanobis, kernel=kernel)
+    contours_eroded, hierarchy = cv.findContours(segmented_image_mahalanobis_eroded, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    compare_original_and_segmented_image(segmented_image_mahalanobis_eroded, segmented_image_mahalanobis, "erodede")
+    plt.show()
+    # Erosion har ikke den øsnkede effekt eftersom antallet af fundne græskar ikke bliver højere.
+    # Derfor tænker jeg ikke det skal bruges
+
+
+    # 3.2.3
+    print("numper of pumpkins:", len(contours))
+    print("numper of pumpkins found after erosion:", len(contours_eroded))
+
+
+    # 3.2.4
+    contours_img = cv.drawContours(small_img_rgb, contours, -1, (0,0,255), 1)
+    plt.imshow(contours_img)
+    plt.show()
+
