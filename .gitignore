@@ -10,3 +10,9 @@ pyvenv.cfg
 pip-selfcheck.json
 *output*
 *.tif
+*.jpg
+*.JPG
+*.jpeg
+*.png
+*.PNG
+*.xml
