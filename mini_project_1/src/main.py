@@ -16,8 +16,8 @@ from rasterio.windows import Window
 #     """
 #     Finds pixels annotated in an image, and saves the corresponding pixel values in the non-annotated image.
 #     """
-#     img = cv.imread("mini_project_1/inputs/image.JPG")
-#     img_anno = cv.imread("mini_project_1/inputs/image_annotated.PNG")
+#     img = cv.imread(path_image_orig)
+#     img_anno = cv.imread(path_image_anno)
 
 #     BLUE = [255,0,0]
 #     data_values = pd.DataFrame(columns=['R', 'G', 'B'])
@@ -272,13 +272,18 @@ if __name__ == '__main__':
     # with rio.open(orthomosaic_path) as src:
     #     tiles = get_tiles(src, output_path)
     #     print (f'Loaded {tiles} tiles from {orthomosaic_path}')
+
+    path_image_orig = "mini_project_1/inputs/image.JPG"
+    path_image_anno = "mini_project_1/inputs/image_annotated.PNG"
+    path_image_smal = "mini_project_1/inputs/image.JPG"
+    
     
     # 3.1.1 - Calculate mean, std in RGB and Lab color spaces, visualize color distributions.
-    orig_img_bgr = cv.imread("mini_project_1/inputs/image.JPG")
+    orig_img_bgr = cv.imread(path_image_orig)
     orig_img_rgb = cv.cvtColor(orig_img_bgr, cv.COLOR_BGR2RGB)
     orig_img_lab = cv.cvtColor(orig_img_bgr, cv.COLOR_BGR2Lab)
     
-    anno_img_bgr = cv.imread("mini_project_1/inputs/image_annotated.PNG")
+    anno_img_bgr = cv.imread(path_image_anno)
     anno_img_rgb = cv.cvtColor(anno_img_bgr, cv.COLOR_BGR2RGB)
     anno_img_lab = cv.cvtColor(anno_img_bgr, cv.COLOR_BGR2Lab)
     
@@ -301,7 +306,7 @@ if __name__ == '__main__':
     #plot_color_distribution(pumpkin_color_data_lab[1], 'Lab')
 
     # 3.1.2 - Segment pumpkins in RGB and Lab color spaces using inRange and distance in RGB space to reference color
-    small_img_bgr = cv.imread("mini_project_1/inputs/image_small.jpg")
+    small_img_bgr = cv.imread(path_image_smal)
     small_img_rgb = cv.cvtColor(small_img_bgr, cv.COLOR_BGR2RGB)
     small_img_lab = cv.cvtColor(small_img_bgr, cv.COLOR_BGR2Lab)
     tolerance = 10 #percent
@@ -317,11 +322,8 @@ if __name__ == '__main__':
     compare_original_and_segmented_image(small_img_rgb, segmented_image_euclidean, "Segmented Pumpkins Euclidean RGB")
     
     # Mahalanobis segmentation
-    segmented_image_mahalanobis = segment_image_by_color_distance(small_img_rgb, pumpkin_color_data_rgb[2], None, 20, "Mahalanobis")
+    segmented_image_mahalanobis = segment_image_by_color_distance(small_img_rgb, pumpkin_color_data_rgb[2], None, 10, "Mahalanobis")
     compare_original_and_segmented_image(small_img_rgb, segmented_image_mahalanobis, "Segmented Pumpkins Mahalanobis")
-    plt.show(block=False)
-    plt.pause(0.1)
-    plt.close('all')
 
 
     # 3.2.1 - Count orange plobs
@@ -331,22 +333,33 @@ if __name__ == '__main__':
     
     # 3.2.2 - Filter segmented image
     # Jeg forstår ikke hvorfor vi skal filtrere vores segmenterede billede. Det er jå binært...
-    # Derfor laver jeg erosion i stedet for. Det burde minimere mængden bunker af græskar som bliver talt som ét græskar
-    kernel = np.ones((2,2))
-    segmented_image_mahalanobis_eroded = cv.dilate(segmented_image_mahalanobis, kernel=kernel)
-    contours_eroded, hierarchy = cv.findContours(segmented_image_mahalanobis_eroded, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-    compare_original_and_segmented_image(segmented_image_mahalanobis_eroded, segmented_image_mahalanobis, "erodede")
-    plt.show()
-    # Erosion har ikke den øsnkede effekt eftersom antallet af fundne græskar ikke bliver højere.
-    # Derfor tænker jeg ikke det skal bruges
+    # Derfor laver jeg erosion i stedet for. 
+    # Det burde minimere mængden bunker af græskar som bliver talt som ét græskar
+    # og der burde fjerne enkelte punkter som er for små til at kunne vær et græskar
+    kernel = np.ones((5,5))
+    segmented_image_mahalanobis_filtered = cv.erode(segmented_image_mahalanobis, kernel=kernel)
+    contours_eroded, hierarchy = cv.findContours(segmented_image_mahalanobis_filtered, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    compare_original_and_segmented_image(small_img_rgb, segmented_image_mahalanobis_filtered, "Filtered Segmented Pumpkins Mahalanobis")
 
 
     # 3.2.3 - Count orange blobs in filtered image
     print("numper of pumpkins found after erosion:", len(contours_eroded))
+    
 
+    # 3.2.4 - Draw contours
+    #contours_img = cv.drawContours(small_img_rgb, contours, -1, (0,0,255), 1)  # Draw all contours
+    for c in contours_eroded:
+        M = cv.moments(c)
+        if M['m00'] != 0:
+            cx = int(M['m10']/M['m00'])
+            cy = int(M['m01']/M['m00'])
+            #cv.drawContours(small_img_rgb, [i], -1, (0, 255, 0), 2)    # Draw specific contour
+            cv.circle(small_img_rgb, (cx, cy), 2, (0, 0, 255), -1)      # Draw circle at contour
 
-    # 3.2.4
-    contours_img = cv.drawContours(small_img_rgb, contours, -1, (0,0,255), 1)
-    plt.imshow(contours_img)
-    plt.show()
+    fig = plt.figure()
+    plt.imshow(small_img_rgb)
+
+    plt.show(block=False)
+    plt.pause(0)
+    plt.close('all')
 
