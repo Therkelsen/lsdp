@@ -113,6 +113,14 @@ from rasterio.windows import Window
 #     plt.title('Histogram of Mahalanobis Distances')
 #     plt.show()
 
+def num2str(num, digits=3):
+    if num < 10:
+        return f'00{num}'
+    elif num < 100:
+        return f'0{num}'
+    else:
+        return str(num)
+    
 def get_tiles(orthomosaic, output_path):
     columns, rows = orthomosaic.width, orthomosaic.height
     tile_size = 512
@@ -128,7 +136,7 @@ def get_tiles(orthomosaic, output_path):
         shutil.rmtree(output_path)
     os.makedirs(output_path)
 
-    tiles = 0
+    num_tiles = 0
     for tile_y in range(0, rows, tile_size):
         for tile_x in range(0, columns, tile_size):
             lrc_x = min(tile_x + tile_size, columns)
@@ -143,10 +151,21 @@ def get_tiles(orthomosaic, output_path):
             # printing uses a lot of cpu time so it is commented out
             # print(f'Loaded tile at ({tile_x}, {tile_y}) with shape: {img_cv.shape}')
             
-            tiles += 1
+            num_tiles += 1
             # save tile as png with its tile index (tile_0, tile_1, etc.)
-            cv.imwrite(f'{output_path}/tile_{tiles}.png', img_cv)
-    return
+            cv.imwrite(f'{output_path}/tile_{num2str(num_tiles)}.png', img_cv)
+    return num_tiles
+
+def load_tiles_lazy(tile_path):
+    for filename in sorted(os.listdir(tile_path)):  # Sort to maintain order
+        if filename.endswith('.png') or filename.endswith('.jpg'):  # Ensure it's an image
+            file_path = os.path.join(tile_path, filename)
+            img = cv.imread(file_path)  # Load only one tile at a time
+            yield filename, img  # Yield filename and image instead of storing them all in memory
+
+def is_image_empty(image):
+    #return true if all pixels are the same color
+    return np.all(image == image[0])
 
 def get_annotated_color_data(orig_img, anno_img, anno_color):
     mask = cv.inRange(anno_img, anno_color, anno_color)
@@ -248,7 +267,7 @@ def segment_image_by_color_distance(image, reference_color, distance_image, thre
     elif method == "Mahalanobis":
         covariance_matrix = np.cov(pixels, rowvar=False)
         diff = pixels - np.repeat([reference_color], shape[0], axis=0)
-        inv_cov = np.linalg.inv(covariance_matrix)
+        inv_cov = np.linalg.pinv(covariance_matrix)
         moddotproduct = diff * (diff @ inv_cov)
         mahalanobis_dist = np.sum(moddotproduct, 
             axis=1)
@@ -258,25 +277,30 @@ def segment_image_by_color_distance(image, reference_color, distance_image, thre
                 image.shape[1]))
 
         # Scale the distance image and export it.
-        mahalanobis_distance_image = 255 * mahalanobis_distance_image / np.max(mahalanobis_distance_image)
+        if np.max(mahalanobis_distance_image) > 0:
+            mahalanobis_distance_image = 255 * mahalanobis_distance_image / np.max(mahalanobis_distance_image)
+        else:
+            print("Warning: Mahalanobis distance is zero everywhere.")
         mahalanobis_distance_image = mahalanobis_distance_image.astype(np.uint8)
         segmented_image_mahalanobis = cv.inRange(mahalanobis_distance_image, threshold, 255)
         return np.max(segmented_image_mahalanobis) - segmented_image_mahalanobis
     else:
         raise ValueError("Invalid method. Use 'Euclidean' or 'Mahalanobis'.")
+    
+def is_circle_near_edge(cx, cy, r, x0, y0, x1, y1):
+    return (
+        cx - r <= x0 or  # Near left edge
+        cx + r >= x1 or  # Near right edge
+        cy - r <= y0 or  # Near top edge
+        cy + r >= y1     # Near bottom edge
+    )
 
 if __name__ == '__main__':
-    # orthomosaic_path = "mini_project_1/inputs/segmented_orthomosaic.tif"
-    # output_path = "mini_project_1/outputs"
-
-    # with rio.open(orthomosaic_path) as src:
-    #     tiles = get_tiles(src, output_path)
-    #     print (f'Loaded {tiles} tiles from {orthomosaic_path}')
-
+    print('Starting Pumpkin counting program.')
+    
     path_image_orig = "mini_project_1/inputs/image.JPG"
     path_image_anno = "mini_project_1/inputs/image_annotated.PNG"
-    path_image_smal = "mini_project_1/inputs/image.JPG"
-    
+    path_image_smal = "mini_project_1/inputs/image.JPG"    
     
     # 3.1.1 - Calculate mean, std in RGB and Lab color spaces, visualize color distributions.
     orig_img_bgr = cv.imread(path_image_orig)
@@ -304,62 +328,114 @@ if __name__ == '__main__':
     # Plot the color distributions for the pixels selected by annotation
     #plot_color_distribution(pumpkin_color_data_rgb[1], 'RGB')
     #plot_color_distribution(pumpkin_color_data_lab[1], 'Lab')
-
-    # 3.1.2 - Segment pumpkins in RGB and Lab color spaces using inRange and distance in RGB space to reference color
-    small_img_bgr = cv.imread(path_image_smal)
-    small_img_rgb = cv.cvtColor(small_img_bgr, cv.COLOR_BGR2RGB)
-    small_img_lab = cv.cvtColor(small_img_bgr, cv.COLOR_BGR2Lab)
-    tolerance = 10 #percent
     
-    segmented_image_rgb = segment_image_by_color_inrange(small_img_rgb, pumpkin_color_data_rgb[2], tolerance, "RGB")
-    compare_original_and_segmented_image(small_img_rgb, segmented_image_rgb, "Segmented Pumpkins RGB")
-    
-    segmented_image_lab = segment_image_by_color_inrange(small_img_lab, pumpkin_color_data_lab[2], tolerance, "Lab")
-    compare_original_and_segmented_image(small_img_rgb, segmented_image_lab, "Segmented Pumpkins Lab")
-    
-    # Euclidean segmentation
-    segmented_image_euclidean = segment_image_by_color_distance(small_img_rgb, pumpkin_color_data_rgb[2], None, 50, "Euclidean")
-    compare_original_and_segmented_image(small_img_rgb, segmented_image_euclidean, "Segmented Pumpkins Euclidean RGB")
-    
-    # Mahalanobis segmentation
-    segmented_image_mahalanobis = segment_image_by_color_distance(small_img_rgb, pumpkin_color_data_rgb[2], None, 10, "Mahalanobis")
-    compare_original_and_segmented_image(small_img_rgb, segmented_image_mahalanobis, "Segmented Pumpkins Mahalanobis")
+    # 3.4.1 - 3.4.2 - Load orthomosaic and split into tiles
+    orthomosaic_path = "mini_project_1/inputs/segmented_orthomosaic.tif"
+    tile_path = "mini_project_1/outputs/tiles"
+
+    with rio.open(orthomosaic_path) as src:
+        num_tiles = get_tiles(src, tile_path)
+        print (f'Loaded {num_tiles} tiles from {orthomosaic_path}')
+        print('\nPrinting some of the tile processing outputs:')
+        num_empty = 0
+        num_tiles = 0
+        cum_sum_pump = 0
+        cum_sum_edge = 0
+        for filename, img in load_tiles_lazy(tile_path):
+            if is_image_empty(img):
+                # print(f"Skipping {filename} as it is empty")
+                num_empty += 1
+                continue
+            num_tiles += 1
+            img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
+            
+            # print(f"Processing {filename} with shape {img.shape}:")  # Process one image at a time
+                
+            # cv.imshow(filename, img)
+            # cv.waitKey(0)
+            # cv.destroyAllWindows()
+            
+            # 3.4.3 - Count pumpkins in each tile
+
+            # # 3.1.2 - Segment pumpkins in RGB and Lab color spaces using inRange and distance in RGB space to reference color
+            # small_img_bgr = cv.imread(path_image_smal)
+            # small_img_rgb = cv.cvtColor(small_img_bgr, cv.COLOR_BGR2RGB)
+            # small_img_lab = cv.cvtColor(small_img_bgr, cv.COLOR_BGR2Lab)
+            # tolerance = 10 #percent
+            
+            # segmented_image_rgb = segment_image_by_color_inrange(small_img_rgb, pumpkin_color_data_rgb[2], tolerance, "RGB")
+            # # compare_original_and_segmented_image(small_img_rgb, segmented_image_rgb, "Segmented Pumpkins RGB")
+            
+            # segmented_image_lab = segment_image_by_color_inrange(small_img_lab, pumpkin_color_data_lab[2], tolerance, "Lab")
+            # # compare_original_and_segmented_image(small_img_rgb, segmented_image_lab, "Segmented Pumpkins Lab")
+            
+            # # Euclidean segmentation
+            # segmented_image_euclidean = segment_image_by_color_distance(small_img_rgb, pumpkin_color_data_rgb[2], None, 50, "Euclidean")
+            # # compare_original_and_segmented_image(small_img_rgb, segmented_image_euclidean, "Segmented Pumpkins Euclidean RGB")
+            
+            # Mahalanobis segmentation
+            segmented_image_mahalanobis = segment_image_by_color_distance(img, pumpkin_color_data_rgb[2], None, 40, "Mahalanobis")
+            # cv.imshow("Segmented Pumpkins Mahalanobis", segmented_image_mahalanobis)
+            # cv.waitKey(0)
+            # cv.destroyAllWindows()
+            
+            # print(f'Segmented image shape: {segmented_image_mahalanobis.shape}')
+            # compare_original_and_segmented_image(img, segmented_image_mahalanobis, "Segmented Pumpkins Mahalanobis")
+            
+            # # 3.2.1 - Count orange blobs
+            # contours, hierarchy = cv.findContours(segmented_image_mahalanobis, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+            # print("Pumpkins found before opening:", len(contours))
+
+            # 3.2.2 - Filter segmented image
+            # Jeg forstår ikke hvorfor vi skal filtrere vores segmenterede billede. Det er jå binært...
+            # Derfor laver jeg erosion i stedet for. 
+            # Det burde minimere mængden bunker af græskar som bliver talt som ét græskar
+            # og der burde fjerne enkelte punkter som er for små til at kunne vær et græskar
+            kernel = np.ones((5,5), np.uint8)
+
+            # run an opening on the segmented image
+            # segmented_image_mahalanobis_filtered = cv.erode(segmented_image_mahalanobis, kernel=kernel)
+            segmented_image_mahalanobis_filtered = cv.morphologyEx(segmented_image_mahalanobis, cv.MORPH_OPEN, kernel)
+            contours_opened, hierarchy = cv.findContours(segmented_image_mahalanobis_filtered, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+            # compare_original_and_segmented_image(img, segmented_image_mahalanobis_filtered, "Filtered Segmented Pumpkins Mahalanobis")
 
 
-    # 3.2.1 - Count orange plobs
-    contours, hierarchy = cv.findContours(segmented_image_mahalanobis, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-    print("numper of pumpkins found:", len(contours))
+            # 3.2.3 / 3.4.3 - Count orange blobs in image / orthomosaic tile
+            cum_sum_pump += len(contours_opened)
+            # print(f"Pumpkins found in {filename}: {len(contours_opened)}")
 
-    
-    # 3.2.2 - Filter segmented image
-    # Jeg forstår ikke hvorfor vi skal filtrere vores segmenterede billede. Det er jå binært...
-    # Derfor laver jeg erosion i stedet for. 
-    # Det burde minimere mængden bunker af græskar som bliver talt som ét græskar
-    # og der burde fjerne enkelte punkter som er for små til at kunne vær et græskar
-    kernel = np.ones((5,5))
-    segmented_image_mahalanobis_filtered = cv.erode(segmented_image_mahalanobis, kernel=kernel)
-    contours_eroded, hierarchy = cv.findContours(segmented_image_mahalanobis_filtered, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-    compare_original_and_segmented_image(small_img_rgb, segmented_image_mahalanobis_filtered, "Filtered Segmented Pumpkins Mahalanobis")
+            # 3.2.4 - Draw contours
+            #contours_img = cv.drawContours(small_img_rgb, contours, -1, (0,0,255), 1)  # Draw all contours
+            near_edge = []
+            x0 = 0
+            y0 = 0
+            x1 = 512
+            y1 = 512
+            for c in contours_opened:
+                M = cv.moments(c)
+                if M['m00'] != 0:
+                    cx = int(M['m10']/M['m00'])
+                    cy = int(M['m01']/M['m00'])
+                    radius = 10
+                    # 3.4.4 - Deal with pumpkins in the overlap, so they are only counted once.
+                    if is_circle_near_edge(cx, cy, radius, x0, y0, x1, y1):
+                        near_edge.append(c)
+                        color = (0, 0, 255, 255)  # Red color with full opacity
+                    else:
+                        color = (255, 0, 0, 255)
+                        
+                    #cv.drawContours(small_img_rgb, [i], -1, (0, 255, 0), 2)    # Draw specific contour
+                    cv.circle(img, (cx, cy), radius, color, thickness=2)
+                    # if is_circle_near_edge(cx, cy, radius, x0, y0, x1, y1):
+            cum_sum_edge += len(near_edge)
+            if (num_tiles + num_empty) % 16 == 0:
+                print(f'{filename}: Found {num2str(len(contours_opened))} pumpkins with {num2str(len(near_edge))} near an edge.')
+            # cv.imshow('Contours', cv.cvtColor(img, cv.COLOR_RGB2BGR))
+            # cv.waitKey(0)
+            # cv.destroyAllWindows()
 
-
-    # 3.2.3 - Count orange blobs in filtered image
-    print("numper of pumpkins found after erosion:", len(contours_eroded))
-    
-
-    # 3.2.4 - Draw contours
-    #contours_img = cv.drawContours(small_img_rgb, contours, -1, (0,0,255), 1)  # Draw all contours
-    for c in contours_eroded:
-        M = cv.moments(c)
-        if M['m00'] != 0:
-            cx = int(M['m10']/M['m00'])
-            cy = int(M['m01']/M['m00'])
-            #cv.drawContours(small_img_rgb, [i], -1, (0, 255, 0), 2)    # Draw specific contour
-            cv.circle(small_img_rgb, (cx, cy), 2, (0, 0, 255), -1)      # Draw circle at contour
-
-    fig = plt.figure()
-    plt.imshow(small_img_rgb)
-
-    plt.show(block=False)
-    plt.pause(0)
-    plt.close('all')
-
+        # 3.4.5 - Determine amount of pumpkins in the entire field.
+        print(f'Processed {num_tiles} tiles, skipped {num_empty} empty tiles.')
+        print(f'Found {cum_sum_pump} pumpkins in total.')
+        print(f'Of which, {cum_sum_edge} were near the edge of an image.')
+        print(f'Without doubly counted pumpkins, there was {int(np.round(cum_sum_pump - cum_sum_edge/2))} total pumpkins.')
