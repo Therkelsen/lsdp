@@ -189,6 +189,102 @@ def segment_image_by_color_distance(image, reference_color, distance_image, thre
     else:
         raise ValueError("Invalid method. Use 'Euclidean' or 'Mahalanobis'.")
     
+def create_segmented_image_for_report():
+    path_image_orig = "mini_project_1/inputs/image.JPG"
+    path_image_anno = "mini_project_1/inputs/image_annotated.PNG"
+    path_image_smal = "mini_project_1/inputs/image_small.JPG"    
+    
+    # 3.1.1 - Calculate mean, std in RGB and Lab color spaces, visualize color distributions.
+    orig_img_bgr = cv.imread(path_image_orig)
+    orig_img_rgb = cv.cvtColor(orig_img_bgr, cv.COLOR_BGR2RGB)
+    orig_img_lab = cv.cvtColor(orig_img_bgr, cv.COLOR_BGR2Lab)
+    
+    anno_img_bgr = cv.imread(path_image_anno)
+    anno_img_rgb = cv.cvtColor(anno_img_bgr, cv.COLOR_BGR2RGB)
+    anno_img_lab = cv.cvtColor(anno_img_bgr, cv.COLOR_BGR2Lab)
+    
+    anno_color_rgb = np.array([0, 0, 255], dtype=np.uint8)
+    
+    anno_color_bgr = anno_color_rgb[::-1]  # Convert RGB → BGR
+    anno_color_lab = cv.cvtColor(anno_color_bgr.reshape(1, 1, 3), cv.COLOR_BGR2Lab).reshape(3)
+    anno_color_lab = anno_color_lab.astype(np.uint8)  # Convert to uint8 for OpenCV
+    
+    # Get annotated color data
+    pumpkin_color_data_rgb = get_annotated_color_data(orig_img_rgb, anno_img_rgb, anno_color_rgb)
+    pumpkin_color_data_lab = get_annotated_color_data(orig_img_lab, anno_img_lab, anno_color_lab)
+
+    # 3.1.2 - Segment pumpkins in RGB and Lab color spaces using inRange and distance in RGB space to reference color
+    small_img_bgr = cv.imread(path_image_smal)
+    small_img_rgb = cv.cvtColor(small_img_bgr, cv.COLOR_BGR2RGB)
+    small_img_lab = cv.cvtColor(small_img_bgr, cv.COLOR_BGR2Lab)
+    
+    # Create segmented images
+    segmented_image_rgb = segment_image_by_color_inrange(small_img_rgb, pumpkin_color_data_rgb[2], 15, "RGB")
+    segmented_image_lab = segment_image_by_color_inrange(small_img_lab, pumpkin_color_data_lab[2], 15, "Lab")
+    segmented_image_euclidean = segment_image_by_color_distance(small_img_rgb, pumpkin_color_data_rgb[2], None, 60, "Euclidean")
+    segmented_image_mahalanobis = segment_image_by_color_distance(small_img_rgb, pumpkin_color_data_rgb[2], None, 35, "Mahalanobis")
+
+    # Show 2x2 comparison image of segmentations
+    fig = plt.figure(figsize=(6,6))
+    fig.subplots_adjust(hspace=10, wspace=10)
+    rows = 2
+    cols = 2
+    ax1 = plt.subplot(rows, cols, 1)
+    ax1.imshow(segmented_image_rgb)
+    ax1.set_title("RGB")
+    ax1.axis('off')
+    ax2 = plt.subplot(rows, cols, 2, sharex=ax1, sharey=ax1)
+    ax2.imshow(segmented_image_lab)
+    ax2.set_title("LAB")
+    ax2.axis('off')
+    ax3 = plt.subplot(rows, cols, 3, sharex=ax1, sharey=ax1)
+    ax3.imshow(segmented_image_euclidean)
+    ax3.set_title("Euclidian")
+    ax3.axis('off')
+    ax4 = plt.subplot(rows, cols, 4, sharex=ax1, sharey=ax1)
+    ax4.imshow(segmented_image_mahalanobis)
+    ax4.set_title("Mahalanobis")
+    ax4.axis('off')
+    plt.tight_layout()
+
+    # Show origional image
+    plt.figure()
+    ax5 = plt.subplot(1,1,1, sharex=ax1, sharey=ax1)
+    ax5.imshow(small_img_rgb)
+    ax5.axis('off')
+    plt.tight_layout()
+
+    plt.show()
+
+    # Save the four segmented images as square pdf's
+    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    extent = extent.expanded(1,1.3)                     # Expand upwards to include title 
+    height = abs(extent.extents[2] - extent.extents[0])
+    width = abs(extent.extents[1] - extent.extents[3])
+    extent = extent.expanded(width/height, 1)           # Expand sideways to make square
+    fig.savefig('ax1_figure_expanded.pdf', bbox_inches=extent)
+
+    extent = ax2.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    extent = extent.expanded(1,1.3) 
+    height = abs(extent.extents[2] - extent.extents[0])
+    width = abs(extent.extents[1] - extent.extents[3])
+    extent = extent.expanded(width/height, 1)
+    fig.savefig('ax2_figure_expanded.pdf', bbox_inches=extent)
+
+    extent = ax3.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    extent = extent.expanded(1,1.3)
+    height = abs(extent.extents[2] - extent.extents[0])
+    width = abs(extent.extents[1] - extent.extents[3])
+    extent = extent.expanded(width/height, 1)
+    fig.savefig('ax3_figure_expanded.pdf', bbox_inches=extent)
+
+    extent = ax4.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    extent = extent.expanded(1,1.3)
+    height = abs(extent.extents[2] - extent.extents[0])
+    width = abs(extent.extents[1] - extent.extents[3])
+    extent = extent.expanded(width/height, 1)
+    fig.savefig('ax4_figure_expanded.pdf', bbox_inches=extent)
+
 def is_circle_near_edge(cx, cy, r, x0, y0, x1, y1):
     return (
         cx - r <= x0 or  # Near left edge
