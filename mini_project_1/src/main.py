@@ -298,7 +298,7 @@ if __name__ == '__main__':
     
     path_image_orig = "mini_project_1/inputs/image.JPG"
     path_image_anno = "mini_project_1/inputs/image_annotated.PNG"
-    path_image_smal = "mini_project_1/inputs/image.JPG"    
+    path_image_smal = "mini_project_1/inputs/image_small.JPG"    
     
     # 3.1.1 - Calculate mean, std in RGB and Lab color spaces, visualize color distributions.
     orig_img_bgr = cv.imread(path_image_orig)
