@@ -80,10 +80,17 @@ def plot_color_distribution(image_masked_no_zeros, color_space):
     channels = []
     colors = []
     labels = []
-    if color_space == "RGB":
+    if color_space == "BGR":
         r_channel = image_masked_no_zeros[:, 2]  # Red channel
         g_channel = image_masked_no_zeros[:, 1]  # Green channel
         b_channel = image_masked_no_zeros[:, 0]  # Blue channel
+        channels = [r_channel, g_channel, b_channel]
+        colors = ['red', 'green', 'blue']
+        labels = ['Red', 'Green', 'Blue']
+    if color_space == "RGB":
+        r_channel = image_masked_no_zeros[:, 0]  # Red channel
+        g_channel = image_masked_no_zeros[:, 1]  # Green channel
+        b_channel = image_masked_no_zeros[:, 2]  # Blue channel
         channels = [r_channel, g_channel, b_channel]
         colors = ['red', 'green', 'blue']
         labels = ['Red', 'Green', 'Blue']
