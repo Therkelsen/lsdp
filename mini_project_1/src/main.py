@@ -298,7 +298,7 @@ if __name__ == '__main__':
     
     path_image_orig = "mini_project_1/inputs/image.JPG"
     path_image_anno = "mini_project_1/inputs/image_annotated.PNG"
-    path_image_smal = "mini_project_1/inputs/image_small.JPG"    
+    path_image_smal = "mini_project_1/inputs/image_small.JPG"
     
     # 3.1.1 - Calculate mean, std in RGB and Lab color spaces, visualize color distributions.
     orig_img_bgr = cv.imread(path_image_orig)
@@ -414,26 +414,30 @@ if __name__ == '__main__':
                 if M['m00'] != 0:
                     cx = int(M['m10']/M['m00'])
                     cy = int(M['m01']/M['m00'])
-                    radius = 10
+                    
+                    (x, y), radius = cv.minEnclosingCircle(c)
+                    radius = int(radius)
                     # 3.4.4 - Deal with pumpkins in the overlap, so they are only counted once.
-                    if is_circle_near_edge(cx, cy, radius, x0, y0, x1, y1):
+                    if is_circle_near_edge(cx, cy, int(round(radius/2)), x0, y0, x1, y1):
                         near_edge.append(c)
-                        color = (0, 0, 255, 255)  # Red color with full opacity
+                        color = (255, 0, 0, 255) # Red
+                        # color = (0, 0, 255, 255) # Blue
                     else:
-                        color = (255, 0, 0, 255)
+                        color = (0, 0, 255, 255) # Blue
                         
                     #cv.drawContours(small_img_rgb, [i], -1, (0, 255, 0), 2)    # Draw specific contour
                     cv.circle(img, (cx, cy), radius, color, thickness=2)
                     # if is_circle_near_edge(cx, cy, radius, x0, y0, x1, y1):
             cum_sum_edge += len(near_edge)
-            if (num_tiles + num_empty) % 16 == 0:
-                print(f'{filename}: Found {num2str(len(contours_opened))} pumpkins with {num2str(len(near_edge))} near an edge.')
-            # cv.imshow('Contours', cv.cvtColor(img, cv.COLOR_RGB2BGR))
-            # cv.waitKey(0)
-            # cv.destroyAllWindows()
+            # if (num_tiles + num_empty) % 16 == 0:
+                # print(f'{filename}: Found {num2str(len(contours_opened))} pumpkins with {num2str(len(near_edge))} near an edge.')
+            cv.imwrite('mini_project_1/outputs/input_img_with_counts_edge.png', cv.cvtColor(img, cv.COLOR_RGB2BGR))
+            cv.imshow('Contours', cv.cvtColor(img, cv.COLOR_RGB2BGR))
+            cv.waitKey(0)
+            cv.destroyAllWindows()
 
-        # 3.4.5 - Determine amount of pumpkins in the entire field.
-        print(f'Processed {num_tiles} tiles, skipped {num_empty} empty tiles.')
-        print(f'Found {cum_sum_pump} pumpkins in total.')
-        print(f'Of which, {cum_sum_edge} were near the edge of an image.')
-        print(f'Without doubly counted pumpkins, there was {int(np.round(cum_sum_pump - cum_sum_edge/2))} total pumpkins.')
+            # 3.4.5 - Determine amount of pumpkins in the entire field.
+            # print(f'Processed {num_tiles} tiles, skipped {num_empty} empty tiles.')
+            # print(f'Found {cum_sum_pump} pumpkins in total.')
+            # print(f'Of which, {cum_sum_edge} were near the edge of an image.')
+            # print(f'Without doubly counted pumpkins, there was {int(np.round(cum_sum_pump - cum_sum_edge/2))} total pumpkins.')
