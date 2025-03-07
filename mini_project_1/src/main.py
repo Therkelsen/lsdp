@@ -292,6 +292,9 @@ def is_circle_near_edge(cx, cy, r, x0, y0, x1, y1):
         cy - r <= y0 or  # Near top edge
         cy + r >= y1     # Near bottom edge
     )
+    
+def percent(pop, sample):
+    return int(pop/sample*100)
 
 if __name__ == '__main__':
     print('Starting Pumpkin counting program.')
@@ -334,11 +337,13 @@ if __name__ == '__main__':
     with rio.open(orthomosaic_path) as src:
         num_tiles = get_tiles(src, tile_path)
         print (f'Loaded {num_tiles} tiles from {orthomosaic_path}')
-        print('\nPrinting some of the tile processing outputs:')
+        # print('\nPrinting some of the tile processing outputs:')
         num_empty = 0
         num_tiles = 0
         cum_sum_pump = 0
         cum_sum_edge = 0
+        cum_sum_too_small = 0
+        cum_sum_pump_area = []
         for filename, img in load_tiles_lazy(tile_path):
             if is_image_empty(img):
                 # print(f"Skipping {filename} as it is empty")
@@ -348,7 +353,7 @@ if __name__ == '__main__':
             img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
             
             # print(f"Processing {filename} with shape {img.shape}:")  # Process one image at a time
-                
+            # plt.imsave('mini_project_1/outputs/input_img.png', img)
             # cv.imshow(filename, img)
             # cv.waitKey(0)
             # cv.destroyAllWindows()
@@ -394,21 +399,25 @@ if __name__ == '__main__':
             # run an opening on the segmented image
             # segmented_image_mahalanobis_filtered = cv.erode(segmented_image_mahalanobis, kernel=kernel)
             segmented_image_mahalanobis_filtered = cv.morphologyEx(segmented_image_mahalanobis, cv.MORPH_OPEN, kernel)
+            # plt.imsave('mini_project_1/outputs/opened_img.png', segmented_image_mahalanobis_filtered)
+            
             contours_opened, hierarchy = cv.findContours(segmented_image_mahalanobis_filtered, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
             # compare_original_and_segmented_image(img, segmented_image_mahalanobis_filtered, "Filtered Segmented Pumpkins Mahalanobis")
 
 
             # 3.2.3 / 3.4.3 - Count orange blobs in image / orthomosaic tile
-            cum_sum_pump += len(contours_opened)
             # print(f"Pumpkins found in {filename}: {len(contours_opened)}")
 
             # 3.2.4 - Draw contours
             #contours_img = cv.drawContours(small_img_rgb, contours, -1, (0,0,255), 1)  # Draw all contours
-            near_edge = []
+            near_edge = False
             x0 = 0
             y0 = 0
             x1 = 512
             y1 = 512
+            temp_cum_sum = 0
+            temp_cum_sum_edge = 0
+            temp_cum_sum_too_small = 0
             for c in contours_opened:
                 M = cv.moments(c)
                 if M['m00'] != 0:
@@ -417,27 +426,74 @@ if __name__ == '__main__':
                     
                     (x, y), radius = cv.minEnclosingCircle(c)
                     radius = int(radius)
+                    area = cv.contourArea(c)
+                    cum_sum_pump_area.append(area)
+                    
+                    mean = None
+                    if cum_sum_pump_area:
+                        mean = np.mean(cum_sum_pump_area)
+                    else:
+                        mean = area
+                    
+                    ratio = area/mean
+                    
+                    large_cluster = False
+                    too_small = False
+                    # print(f'Area: {area}\nMean: {mean}\nRatio: {ratio}')
+                    if ratio > 2:
+                        large_cluster = True
+                        temp_cum_sum += int(np.round(ratio))
+                    elif ratio < 0.15:
+                        too_small = True
+                        temp_cum_sum += 1
+                        temp_cum_sum_too_small += 1
+                    else:
+                        large_cluster = False
+                        temp_cum_sum += 1
+                    ratio = int(np.round(ratio))
                     # 3.4.4 - Deal with pumpkins in the overlap, so they are only counted once.
                     if is_circle_near_edge(cx, cy, int(round(radius/2)), x0, y0, x1, y1):
-                        near_edge.append(c)
-                        color = (255, 0, 0, 255) # Red
-                        # color = (0, 0, 255, 255) # Blue
-                    else:
+                        near_edge = True
+                        # color = (255, 0, 0, 255) # Red
                         color = (0, 0, 255, 255) # Blue
-                        
-                    #cv.drawContours(small_img_rgb, [i], -1, (0, 255, 0), 2)    # Draw specific contour
-                    cv.circle(img, (cx, cy), radius, color, thickness=2)
-                    # if is_circle_near_edge(cx, cy, radius, x0, y0, x1, y1):
-            cum_sum_edge += len(near_edge)
+                    else:
+                        near_edge = False
+                        # color = (0, 0, 255, 255) # Blue
+                        color = (0, 255, 0, 255) # Green
+                    
+                    if large_cluster:
+                        color = (255, 0, 255, 255) # Purple
+                        # draw extra circles to visualize that the incorrect clusters have been found
+                        num_circles = max(1, ratio)
+                        for i in range(num_circles):
+                            rad = max(5, int(np.round(radius * (1 - 0.3 * i))))  # Gradually decrease size, min 5px
+                            cv.circle(img, (cx, cy), rad, color, thickness=2)
+                    elif too_small:
+                        # print('Found too small')
+                        color = (255, 0, 0, 255) # Red
+                        cv.circle(img, (cx, cy), radius, color, thickness=2)
+                    else:
+                        cv.circle(img, (cx, cy), radius, color, thickness=2)
+                    
+                    if near_edge and large_cluster:
+                        temp_cum_sum_edge += ratio
+                    elif near_edge and not large_cluster:
+                        temp_cum_sum_edge += 1
+            
+            cum_sum_pump += temp_cum_sum
+            cum_sum_edge += temp_cum_sum_edge
+            cum_sum_too_small += temp_cum_sum_too_small
+            total_pump = int(np.round(cum_sum_pump - cum_sum_too_small - cum_sum_edge/2))
             # if (num_tiles + num_empty) % 16 == 0:
-                # print(f'{filename}: Found {num2str(len(contours_opened))} pumpkins with {num2str(len(near_edge))} near an edge.')
-            cv.imwrite('mini_project_1/outputs/input_img_with_counts_edge.png', cv.cvtColor(img, cv.COLOR_RGB2BGR))
-            cv.imshow('Contours', cv.cvtColor(img, cv.COLOR_RGB2BGR))
-            cv.waitKey(0)
-            cv.destroyAllWindows()
+            #     print(f'{filename}: Found {num2str(temp_cum_sum)} pumpkins with {num2str(temp_cum_sum_edge)} near an edge.')
+            # plt.imsave('mini_project_1/outputs/input_img_with_counts_edge.png', img)
+            # cv.imshow('Contours', cv.cvtColor(img, cv.COLOR_RGB2BGR))
+            # cv.waitKey(0)
+            # cv.destroyAllWindows()
 
-            # 3.4.5 - Determine amount of pumpkins in the entire field.
-            # print(f'Processed {num_tiles} tiles, skipped {num_empty} empty tiles.')
-            # print(f'Found {cum_sum_pump} pumpkins in total.')
-            # print(f'Of which, {cum_sum_edge} were near the edge of an image.')
-            # print(f'Without doubly counted pumpkins, there was {int(np.round(cum_sum_pump - cum_sum_edge/2))} total pumpkins.')
+        # 3.4.5 - Determine amount of pumpkins in the entire field.
+        print(f'\nProcessed {num_tiles} tiles, skipped {num_empty} ({percent(num_empty,num_tiles+num_empty)}%) empty tiles.')
+        print(f'Found {cum_sum_pump} pumpkins in total.')
+        print(f'Of which, {cum_sum_edge} ({percent(cum_sum_edge, cum_sum_pump)}%) were near the edge of an image.')
+        print(f'And {cum_sum_too_small} ({percent(cum_sum_too_small, cum_sum_pump)}%) were not actual pumpkins.')
+        print(f'With corrections, there was {total_pump} total pumpkins.')
