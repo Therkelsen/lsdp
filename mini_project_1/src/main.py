@@ -1,9 +1,7 @@
 import os
-import math
 import shutil
 import cv2 as cv
 import numpy as np
-import pandas as pd
 import rasterio as rio
 import matplotlib.pyplot as plt
 from rasterio.windows import Window
