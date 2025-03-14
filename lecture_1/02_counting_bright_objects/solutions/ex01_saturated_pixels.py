@@ -1,12 +1,12 @@
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 def count_fully_saturated_pixels(img):
     mask = cv2.inRange(img, (255, 255, 255), (255, 255, 255))
     count = np.count_nonzero(mask)
     return count
-
 
 def count_red_saturated_pixels(img):
     mask = cv2.inRange(img, (0, 0, 255), (255, 255, 255))
@@ -45,6 +45,6 @@ def analyse_saturated_pixels(filename):
     print("Blue saturated pixels:    %7d" % count_blue_saturated_pixels(img))
 
 
-analyse_saturated_pixels('../input/over_exposed_DJI_0215.JPG')
-analyse_saturated_pixels('../input/well_exposed_DJI_0214.JPG')
-analyse_saturated_pixels('../input/under_exposed_DJI_0213.JPG')
+analyse_saturated_pixels('lecture_1/02_counting_bright_objects/input/over_exposed_DJI_0215.JPG')
+analyse_saturated_pixels('lecture_1/02_counting_bright_objects/input/well_exposed_DJI_0214.JPG')
+analyse_saturated_pixels('lecture_1/02_counting_bright_objects/input/under_exposed_DJI_0213.JPG')
