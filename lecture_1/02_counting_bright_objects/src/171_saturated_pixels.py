@@ -5,7 +5,7 @@ import os
 
 if __name__ == "__main__":
     input_path = "lecture_1/02_counting_bright_objects/input/"
-    output_path = "lecture_1/01_getting_started/output/169/"
+    # output_path = "lecture_1/01_getting_started/output/169/"
     # output_path_image = output_path + "flower_output_gray.png"
     
     # os.makedirs(os.path.dirname(output_path), exist_ok=True)
