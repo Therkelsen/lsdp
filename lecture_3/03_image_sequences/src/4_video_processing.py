@@ -41,7 +41,7 @@ def motion_detector_acc(frame, accumulator_image, frame_count):
     diff = cv.absdiff(frame, mean_image_uint8)
     diff = cv.cvtColor(diff, cv.COLOR_BGR2GRAY)
 
-    return mean_image_uint8, diff, accumulator_image
+    return diff, accumulator_image
 
 
 def motion_detector_ewma(frame, ewma_image, alpha=0.05):
@@ -59,9 +59,28 @@ def motion_detector_ewma(frame, ewma_image, alpha=0.05):
     diff = cv.absdiff(frame, ewma_image_uint8)
     diff = cv.cvtColor(diff, cv.COLOR_BGR2GRAY)
 
-    return ewma_image_uint8, diff, ewma_image
+    return diff, ewma_image
 
 
+def motion_detector_mog2(frame, mog2_subtractor):
+    """Detect motion using the BackgroundSubtractorMOG2 method."""
+    if mog2_subtractor is None:
+        mog2_subtractor = cv.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)
+
+    # Apply background subtraction to get foreground mask
+    fg_mask = mog2_subtractor.apply(frame)
+
+    # Retrieve the estimated background image
+    bg_image = mog2_subtractor.getBackgroundImage()
+    
+    # Ensure background image is not None before converting
+    if bg_image is None:
+        bg_image = np.zeros_like(frame, dtype=np.uint8)
+
+    return bg_image, fg_mask, mog2_subtractor
+
+# Try to track the car using the meanshift algorithm from OpenCV. Histogram backprojection can be used to locate the colours that matches the car.
+# def track_car_meanshift_histogram_backprojection
 
 def visualize_color_changes(bg_colors_over_time, fg_colors_over_time):
     """Visualize the RGB color changes over time for each pixel."""
@@ -107,6 +126,7 @@ def process_frames(video_path, bg_points, fg_points, output_path, show_video=Tru
     
     accumulator_image = None
     ewma_image = None
+    mog2_subtractor = None
 
     # Font settings
     font = cv.FONT_HERSHEY_SIMPLEX
@@ -128,39 +148,58 @@ def process_frames(video_path, bg_points, fg_points, output_path, show_video=Tru
         bg_colors_over_time.append(bg_colors)
         fg_colors_over_time.append(fg_colors)
 
-        mean_acc, diff_acc, accumulator_image = motion_detector_acc(frame, accumulator_image, counter)
-        mean_ewma, diff_ewma, ewma_image = motion_detector_ewma(frame, ewma_image, alpha=0.05)
+        diff_acc, accumulator_image = motion_detector_acc(frame, accumulator_image, counter)
+        normalized_accumulator_image = (accumulator_image / total_frames).astype(np.uint8)
+        diff_ewma, ewma_image = motion_detector_ewma(frame, ewma_image, alpha=0.05)
+        mean_mog2, diff_mog2, mog2_subtractor = motion_detector_mog2(frame, mog2_subtractor)
 
-        # Plot results only for the last frame
+        # Define kernel for dilation (smaller to reduce exaggeration)
+        small_kernel = np.ones((3, 3), np.uint8)
+        big_kernel = np.ones((5, 5), np.uint8)
+
+        # Binarize the difference images with a higher threshold
+        _, bin_diff_acc = cv.threshold(diff_acc, 60, 255, cv.THRESH_BINARY)   # Increased from 30 to 60
+        _, bin_diff_ewma = cv.threshold(diff_ewma, 30, 255, cv.THRESH_BINARY)
+        _, bin_diff_mog2 = cv.threshold(diff_mog2, 125, 255, cv.THRESH_BINARY)
+
+        # Dilate with fewer iterations to reduce exaggeration
+        dilated_diff_acc = cv.dilate(bin_diff_acc, small_kernel, iterations=2)
+        dilated_diff_ewma = cv.dilate(bin_diff_ewma, big_kernel, iterations=2)
+        dilated_diff_mog2 = cv.dilate(bin_diff_mog2, small_kernel, iterations=1)
+
         if counter == total_frames:
-            plt.figure(figsize=(15, 10))
+            plt.figure(figsize=(10, 8))
 
-            plt.subplot(2, 3, 1)
-            plt.imshow(cv.cvtColor(accumulator_image.astype(np.uint8), cv.COLOR_BGR2RGB))
+            # Accumulator-based Method
+            plt.subplot(3, 2, 1)
+            plt.imshow(cv.cvtColor(normalized_accumulator_image, cv.COLOR_BGR2RGB))
             plt.title("Accumulator Image")
 
-            plt.subplot(2, 3, 2)
-            plt.imshow(cv.cvtColor(mean_acc, cv.COLOR_BGR2RGB))
-            plt.title("Mean Image (Acc)")
+            plt.subplot(3, 2, 2)
+            plt.imshow(dilated_diff_acc, cmap='gray')
+            plt.title("Exaggerated Diff (Acc)")
 
-            plt.subplot(2, 3, 3)
-            plt.imshow(diff_acc, cmap='gray')
-            plt.title("Diff Image (Acc)")
-
-            plt.subplot(2, 3, 4)
+            # EWMA Method
+            plt.subplot(3, 2, 3)
             plt.imshow(cv.cvtColor(ewma_image.astype(np.uint8), cv.COLOR_BGR2RGB))
             plt.title("EWMA Image")
 
-            plt.subplot(2, 3, 5)
-            plt.imshow(cv.cvtColor(mean_ewma, cv.COLOR_BGR2RGB))
-            plt.title("Mean Image (EWMA)")
+            plt.subplot(3, 2, 4)
+            plt.imshow(dilated_diff_ewma, cmap='gray')
+            plt.title("Exaggerated Diff (EWMA)")
 
-            plt.subplot(2, 3, 6)
-            plt.imshow(diff_ewma, cmap='gray')
-            plt.title("Diff Image (EWMA)")
+            # MOG2 Background Subtraction
+            plt.subplot(3, 2, 5)
+            plt.imshow(cv.cvtColor(mean_mog2, cv.COLOR_BGR2RGB))
+            plt.title("Background Model (MOG2)")
+
+            plt.subplot(3, 2, 6)
+            plt.imshow(dilated_diff_mog2, cmap='gray')
+            plt.title("Exaggerated Diff (MOG2)")
 
             plt.tight_layout()
             plt.show()
+
 
         if show_video:
             # Draw background and foreground points
@@ -178,7 +217,7 @@ def process_frames(video_path, bg_points, fg_points, output_path, show_video=Tru
             elif k == ord('s'):  # Save frame on 's'
                 cv.imwrite(output_path, frame)
         else:
-            print(f"Processing frame {counter+1} / {total_frames}")
+            print(f"Processing frame {counter} / {total_frames}")
 
     if show_video:
         cv.destroyAllWindows()
@@ -194,4 +233,4 @@ if __name__ == "__main__":
     output_path = "../output/ex01stillimage.png"
 
     # Set show_video to False to process in the background
-    process_frames(video_path, bg_points, fg_points, output_path, show_video=False)
+    process_frames(video_path, bg_points, fg_points, output_path, show_video=True)
