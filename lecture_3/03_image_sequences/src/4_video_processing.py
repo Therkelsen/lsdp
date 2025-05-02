@@ -233,4 +233,4 @@ if __name__ == "__main__":
     output_path = "../output/ex01stillimage.png"
 
     # Set show_video to False to process in the background
-    process_frames(video_path, bg_points, fg_points, output_path, show_video=True)
+    process_frames(video_path, bg_points, fg_points, output_path, show_video=False)
