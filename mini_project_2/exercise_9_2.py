@@ -2,6 +2,7 @@ import cv2
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import g2o # type: ignore
 
 import sys
 sys.path.append("mini_project_2/Data for miniproject on visual odometry/2024")
@@ -9,6 +10,80 @@ sys.path.append("mini_project_2/Data for miniproject on visual odometry/2024")
 from Map import Map
 from TrackedCamera import TrackedCamera
 from TrackedPoint import TrackedPoint
+
+
+def plot_histogram(data, title_and_xlabel, ylabel, filename, cut_outliers=False, show=False, save=False, tight=True):
+    """
+    Plot a histogram of the given data with optional outlier removal.
+    
+    Parameters:
+    - data: The data to plot (array-like).
+    - title_and_xlabel: Title and X-axis label.
+    - ylabel: Label for the Y-axis.
+    - filename: Filename to save the plot if save=True.
+    - cut_outliers: If set (e.g. 3), cuts data outside of mean ± cut_outliers * std.
+    - show: If True, shows the plot.
+    - save: If True, saves the plot.
+    - tight: If True, applies tight layout.
+    """
+    data = np.asarray(data)
+    mean = np.mean(data)
+    std = np.std(data)
+    min_val = np.min(data)
+    max_val = np.max(data)
+    outlier_title = ""
+
+    if cut_outliers:
+        # Remove outliers beyond ±cut_outliers * std
+        cutoff = cut_outliers * std
+        data = data[np.abs(data - mean) <= cutoff]
+
+        # Recalculate stats
+        mean = np.mean(data)
+        std = np.std(data)
+        min_val = np.min(data)
+        max_val = np.max(data)
+        
+        outlier_title = f" (Within μ \u00B1 3\u03C3)"
+
+    # Print stats
+    print(f"\n{title_and_xlabel}")
+    print(f"Mean: {mean:.2f}")
+    print(f"Standard Deviation: {std:.2f}")
+    print(f"Max: {max_val:.2f}")
+    print(f"Min: {min_val:.2f}")
+
+    # # Freedman-Diaconis rule for bin width
+    # iqr = np.percentile(data, 75) - np.percentile(data, 25)
+    # bin_width = 2 * iqr * len(data) ** (-1/3) if iqr > 0 else std / 5
+    # bin_width = max(bin_width, 1e-6)  # Avoid division by zero
+    # bins = max(1, int(np.ceil((data.max() - data.min()) / bin_width)))
+
+    # Plot histogram
+    # just let it figure out bins by itself
+    plt.figure(figsize=(8, 5))
+    # plt.hist(data, bins=bins, density=True, alpha=0.6, color='g')
+    plt.hist(data, bins=20, density=True, alpha=0.6, color='g')
+
+    # Vertical reference lines
+    plt.axvline(min_val, color='c', linestyle='dashed', linewidth=2, label=f'Min: {min_val:.2f}')
+    plt.axvline(mean - std, color='b', linestyle='dashed', linewidth=2, label=f'Mean - \u03C3: {mean - std:.2f}')
+    plt.axvline(mean, color='r', linestyle='dashed', linewidth=2, label=f'Mean: {mean:.2f}')
+    plt.axvline(mean + std, color='b', linestyle='dashed', linewidth=2, label=f'Mean + \u03C3: {mean + std:.2f}')
+    plt.axvline(max_val, color='y', linestyle='dashed', linewidth=2, label=f'Max: {max_val:.2f}')
+
+    plt.xlabel(title_and_xlabel)
+    plt.ylabel(ylabel)
+    plt.title(f"Histogram of {title_and_xlabel}{outlier_title}")
+    plt.legend()
+
+    if tight:
+        plt.tight_layout()
+    if save:
+        plt.savefig(filename, bbox_inches='tight')
+        print(f"Saved histogram to {filename}")
+    if show:
+        plt.show()
 
 
 ################# Exercise 9.2 #################
@@ -83,7 +158,7 @@ def calculate_epipolar_distance(pt1, pt2, E, K):
     distance = abs(a * pt2[0] + b * pt2[1] + c) / np.sqrt(a**2 + b**2)
     return distance
 
-# Calculate epipolar distances for all matched points
+# Calculate epipolar distance for each matched point
 distances = []
 for m in good_matches:
     pt1 = keypoints1[m.queryIdx].pt
@@ -189,77 +264,67 @@ for i, pt3d in enumerate(points_3d):
         map.observations.append(obs)
         
 # Calculate reprojection error
-reprojection_errors = []
+# reprojection_errors = []
 
-# Iterate over all the tracked points
-for i, pt3d in enumerate(points_3d):
-    # Project the 3D point back to image coordinates for both cameras
-    for cam, pts in zip(cams, (pts1, pts2)):
-        # Get the projection matrix for the current camera
-        P = K @ np.hstack((cam.R, cam.t))  # P = K * [R | t]
+# # Iterate over all the tracked points
+# for i, pt3d in enumerate(points_3d):
+#     # Project the 3D point back to image coordinates for both cameras
+#     for cam, pts in zip(cams, (pts1, pts2)):
+#         # Get the projection matrix for the current camera
+#         P = K @ np.hstack((cam.R, cam.t))  # P = K * [R | t]
         
-        # Project the 3D point (homogeneous coordinates)
-        pt_3d_hom = np.append(pt3d, 1)  # Convert to homogeneous coordinates (x, y, z, 1)
-        pt_projected_hom = P @ pt_3d_hom  # Project 3D point
+#         # Project the 3D point (homogeneous coordinates)
+#         pt_3d_hom = np.append(pt3d, 1)  # Convert to homogeneous coordinates (x, y, z, 1)
+#         pt_projected_hom = P @ pt_3d_hom  # Project 3D point
 
-        # Convert back to non-homogeneous image coordinates
-        pt_projected = pt_projected_hom[:2] / pt_projected_hom[2]
+#         # Convert back to non-homogeneous image coordinates
+#         pt_projected = pt_projected_hom[:2] / pt_projected_hom[2]
 
-        # Calculate the reprojection error as the Euclidean distance between projected and observed point
-        pt_observed = pts[i, 0]  # Get the observed point from the matched keypoints
-        reprojection_error = np.linalg.norm(pt_projected - pt_observed)
+#         # Calculate the reprojection error as the Euclidean distance between projected and observed point
+#         pt_observed = pts[i, 0]  # Get the observed point from the matched keypoints
+#         reprojection_error = np.linalg.norm(pt_projected - pt_observed)
 
-        reprojection_errors.append(reprojection_error)
+#         reprojection_errors.append(reprojection_error)
 
-# Calculate summary statistics of the reprojection errors (before filtering)
-mean_reprojection_error = np.mean(reprojection_errors)
-std_reprojection_error = np.std(reprojection_errors)
-max_reprojection_error = np.max(reprojection_errors)
-min_reprojection_error = np.min(reprojection_errors)
+# # Calculate summary statistics of the reprojection errors (before filtering)
+# plot_histogram(reprojection_errors, "Reprojection Error", "Reprojection Error", "Density",
+#                "reprojection_error_histogram.png", cut_outliers=3, show=False, save=True, tight=True)
 
-# Remove everything outside 3 sigma
-reprojection_errors = np.array(reprojection_errors)
-reprojection_errors = reprojection_errors[np.abs(reprojection_errors - mean_reprojection_error) <= 3 * std_reprojection_error]
+reprojection_errors, total_reprojection_error = map.calculate_reprojection_error()
 
-mean_reprojection_error = np.mean(reprojection_errors)
-std_reprojection_error = np.std(reprojection_errors)
-max_reprojection_error = np.max(reprojection_errors)
-min_reprojection_error = np.min(reprojection_errors)
+print("\nReprojection Error Statistics (Before Bundle Adjustment):")
+print(f"Total Reprojection Error: {total_reprojection_error}")
+print(f"Number of Observations: {len(reprojection_errors)}")
 
-# Print out the statistics
-print(f"\nReprojection Error:")
-print(f"Mean Reprojection Error: {mean_reprojection_error}")
-print(f"Standard Deviation of Reprojection Error: {std_reprojection_error}")
-print(f"Max Reprojection Error: {max_reprojection_error}")
-print(f"Min Reprojection Error: {min_reprojection_error}")
+plot_histogram(reprojection_errors,
+               title_and_xlabel="Reprojection Error Distribution (Before Bundle Adjustment)",
+               ylabel="Density", filename="", cut_outliers=False, show=False, save=False, tight=True)
 
-# Calculate the number of bins using Freedman-Diaconis rule
-iqr = np.percentile(reprojection_errors, 75) - np.percentile(reprojection_errors, 25)
-bin_width = 2 * iqr * len(reprojection_errors) ** (-1/3)
-bins = int((reprojection_errors.max() - reprojection_errors.min()) / bin_width)
+map.optimize_map()
 
-# Plot the reprojection errors as a density plot
-plt.hist(reprojection_errors, bins=bins, density=True, alpha=0.6, color='g')
+reprojection_errors, total_reprojection_error = map.calculate_reprojection_error()
 
-# Add relevant vertical lines (min, max, mean, std)
-plt.axvline(min_reprojection_error, color='c', linestyle='dashed', linewidth=2, label=f'Min: {min_reprojection_error:.2f}')
-plt.axvline(mean_reprojection_error - std_reprojection_error, color='b', linestyle='dashed', linewidth=2, label=f'Mean - Std Dev: {mean_reprojection_error - std_reprojection_error:.2f}')
-plt.axvline(mean_reprojection_error, color='r', linestyle='dashed', linewidth=2, label=f'Mean: {mean_reprojection_error:.2f}')
-plt.axvline(mean_reprojection_error + std_reprojection_error, color='b', linestyle='dashed', linewidth=2, label=f'Mean + Std Dev: {mean_reprojection_error + std_reprojection_error:.2f}')
-plt.axvline(max_reprojection_error, color='y', linestyle='dashed', linewidth=2, label=f'Max: {max_reprojection_error:.2f}')
+print("\nReprojection Error Statistics (After Bundle Adjustment):")
+print(f"Total Reprojection Error: {total_reprojection_error}")
+print(f"Number of Observations: {len(reprojection_errors)}")
 
-# Ticks
-plt.xticks(np.arange(0, np.ceil(reprojection_errors.max()), 50))
+plot_histogram(reprojection_errors,
+               title_and_xlabel="Reprojection Error Distribution (After Bundle Adjustment)",
+               ylabel="Density", filename="", cut_outliers=False, show=False, save=False, tight=True)
 
-# Plot settings
-plt.xlabel('Reprojection Error')
-plt.ylabel('Density')
-# histogram with outliers outside of 3 sigma removed. lets mention sometihng like gt +3 sigma, lt -3 sigma removed
-# plt.title('Histogram of Reprojection Errors (\u00B13\u03C3 removed)')
-plt.title('Histogram of Reprojection Errors (Within μ \u00B1 3\u03C3)')
+# Cut observations outside ±3\u03C3 after BA
+std_error = np.std(reprojection_errors)
+map.remove_observations_with_reprojection_errors_above_threshold(3 * std_error)
+map.optimize_map()
 
-plt.legend()
+reprojection_errors, total_reprojection_error = map.calculate_reprojection_error()
 
-# Show the plot
-plt.tight_layout()
+print(f"\nReprojection Error Statistics (After Cutting μ \u00B1 3\u03C3 Observations):")
+print(f"Total Reprojection Error: {total_reprojection_error}")
+print(f"Number of Observations: {len(reprojection_errors)}")
+
+plot_histogram(reprojection_errors,
+               title_and_xlabel="Reprojection Error Distribution (After Cutting μ \u00B1 3\u03C3 Observations)",
+               ylabel="Density", filename="", cut_outliers=False, show=False, save=False, tight=True)
+
 plt.show()

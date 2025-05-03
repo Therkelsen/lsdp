@@ -17,3 +17,5 @@ pip-selfcheck.json
 *.PNG
 *.xml
 *.MOV
+**/__pycache__/*
+*.pyc

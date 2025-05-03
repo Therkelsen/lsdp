@@ -91,6 +91,7 @@ class Map():
         for point in self.points:
             point_dict[point.point_id] = point
         total_error = 0
+        errors = []
         for observation in self.observations:
             camera = camera_dict[observation.camera_id]
             point_1 = point_dict[observation.point_id]
@@ -103,18 +104,20 @@ class Map():
             dx = t[0] - observation.image_coordinates[0]
             dy = t[1] - observation.image_coordinates[1]
             sqerror = np.abs(dx*dx) + np.abs(dy*dy)
+            errors.append(sqerror)
             if sqerror > threshold:
                 print("high reprojection error: %f" % sqerror)
                 print(observation)
             total_error += sqerror
 
-        return total_error
+        return errors, total_error
 
 
     def show_total_reprojection_error(self):
-        total_error = self.calculate_reprojection_error()
+        errors, total_error = self.calculate_reprojection_error()
         print("calculated reprojection error")
         print("total error: %f" % total_error)
+        print("errors size: %d" % len(errors))
 
 
     def optimize_map(self, postfix = ""):
