@@ -12,6 +12,31 @@ from TrackedCamera import TrackedCamera
 from TrackedPoint import TrackedPoint
 
 
+def calculate_epipolar_distance(pt1, pt2, E):
+    """
+    Calculate the epipolar distance between two points given the essential matrix.
+
+    Parameters:
+    - pt1: Point in the first image (x, y).
+    - pt2: Point in the second image (x, y).
+    - E: Essential matrix.
+    Returns:
+    - distance: Epipolar distance.
+    """
+    # Convert points to homogeneous coordinates
+    pt1_homogeneous = np.array([pt1[0], pt1[1], 1.0]).reshape(-1, 1)
+
+    # Compute the epipolar line in the second image
+    epipolar_line = E.dot(pt1_homogeneous)
+    
+    # Epipolar line equation: ax + by + c = 0
+    a, b, c = epipolar_line.flatten()
+    
+    # Compute the distance from pt2 to the epipolar line
+    distance = abs(a * pt2[0] + b * pt2[1] + c) / np.sqrt(a**2 + b**2)
+    return distance
+
+
 def plot_histogram(data, title_and_xlabel, ylabel, filename, cut_outliers=False, show=False, save=False, tight=True):
     """
     Plot a histogram of the given data with optional outlier removal.
@@ -92,10 +117,6 @@ def plot_histogram(data, title_and_xlabel, ylabel, filename, cut_outliers=False,
 frames_path = 'mini_project_2/saved_frames'
 frame_files = sorted(os.listdir(frames_path))
 
-# Load the first two frames
-img1 = cv2.imread(os.path.join(frames_path, frame_files[0]), cv2.IMREAD_GRAYSCALE)
-img2 = cv2.imread(os.path.join(frames_path, frame_files[1]), cv2.IMREAD_GRAYSCALE)
-
 # Intrinsic parameters from XML
 f = 2676.1051390718389  # Focal length
 cx = -35.243952918157035  # Principal point x-coordinate
@@ -114,187 +135,205 @@ K = np.array([[f, 0, cx],
 # Distortion coefficients
 dist_coeffs = np.array([k1, k2, p1, p2, k3])
 
-# Undistort the images
-img1_undistorted = cv2.undistort(img1, K, dist_coeffs)
-img2_undistorted = cv2.undistort(img2, K, dist_coeffs)
-
 # Create SIFT detector
 feature_detector = cv2.SIFT_create()
 
-# Detect keypoints and compute descriptors
-keypoints1, descriptors1 = feature_detector.detectAndCompute(img1_undistorted, None)
-keypoints2, descriptors2 = feature_detector.detectAndCompute(img2_undistorted, None)
+num_imgs = len(frame_files)
+# num_imgs = 6
 
-# Match descriptors using Brute-Force Matcher
+# Ensure num_imgs is even for stereo matching
+num_imgs = num_imgs - (num_imgs % 2)
+
+imgs = []
+imgs_undist = []
+keypoints = []
+descriptors = []
+
+print(f"Running VSLAM algorithm on {num_imgs} images...")
+for i in range(num_imgs):
+    print(f"\nPre-processing frame {i+1} out of {num_imgs}...")
+    # Load the image
+    print(f"Loading image {i}...")
+    img = cv2.imread(os.path.join(frames_path, frame_files[i]), cv2.IMREAD_GRAYSCALE)
+    imgs.append(img)
+    
+    # Undistort the image
+    print(f"Undistorting image {i}...")
+    img_undist = cv2.undistort(img, K, dist_coeffs)
+    imgs_undist.append(img_undist)
+    
+    # Detect keypoints and compute descriptors
+    print(f"Detecting keypoints and computing descriptors for image {i}...")
+    kp, des = feature_detector.detectAndCompute(img_undist, None)
+    keypoints.append(kp)
+    descriptors.append(des)
+
+
 bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
-matches = bf.knnMatch(descriptors1, descriptors2, k=2)
+all_matches = []
+all_good_matches = []
+all_pts_pairs = []
+all_essential_matrices = []
+all_masks = []
+all_distances = []
+all_img_kp_pairs = []
+all_img_matches = []
+all_R_matrices = []
+all_t_vectors = []
 
-# Apply Lowe's ratio test to filter matches
-good_matches = []
-for m, n in matches:
-    if m.distance < 0.75 * n.distance:  # Lowe's ratio test threshold
-        good_matches.append(m)
+for i in range(num_imgs - 1):
+    print(f"\nProcessing frame pair {i+1} out of {num_imgs/2} total pairs ({num_imgs} images)...")
+    # Match descriptors using Brute-Force Matcher
+    print(f"Matching descriptors between frames {i} and {i + 1}...")
+    matches = bf.knnMatch(descriptors[i], descriptors[i + 1], k=2)
+    all_matches.append(matches)
 
-# Get the points from the good matches
-pts1 = np.float32([keypoints1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-pts2 = np.float32([keypoints2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+    # Apply Lowe's ratio test to filter matches
+    good_matches = []
+    for m, n in matches:
+        # Lowe's ratio test threshold
+        if m.distance < 0.75 * n.distance:
+            good_matches.append(m)            
+    all_good_matches.append(good_matches)
 
-# Estimate the essential matrix using the camera intrinsic matrix
-# Estimate the essential matrix using RANSAC for robustness
-E, mask = cv2.findEssentialMat(pts1, pts2, K, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+    # Get the points from the good matches
+    pts1 = np.float32([keypoints[i][m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+    pts2 = np.float32([keypoints[i + 1][m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+    all_pts_pairs.append((pts1, pts2))
 
-# Function to calculate the distance between a point and the epipolar line
-def calculate_epipolar_distance(pt1, pt2, E, K):
-    # Convert points to homogeneous coordinates
-    pt1_homogeneous = np.array([pt1[0], pt1[1], 1.0]).reshape(-1, 1)
-
-    # Compute the epipolar line in the second image
-    epipolar_line = E.dot(pt1_homogeneous)
+    # Estimate the essential matrix using the camera intrinsic matrix
+    # Estimate the essential matrix using RANSAC for robustness
+    if len(good_matches) < 5:
+        print(f"Not enough good matches between frames {i} and {i+1}, skipping.")
+        continue
     
-    # Epipolar line equation: ax + by + c = 0
-    a, b, c = epipolar_line.flatten()
-    
-    # Compute the distance from pt2 to the epipolar line
-    distance = abs(a * pt2[0] + b * pt2[1] + c) / np.sqrt(a**2 + b**2)
-    return distance
+    print(f"Estimating essential matrix between frames {i} and {i + 1}...")
+    E, mask = cv2.findEssentialMat(pts1, pts2, K, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+    all_essential_matrices.append(E)
+    all_masks.append(mask)
 
-# Calculate epipolar distance for each matched point
-distances = []
-for m in good_matches:
-    pt1 = keypoints1[m.queryIdx].pt
-    pt2 = keypoints2[m.trainIdx].pt
-    distance = calculate_epipolar_distance(pt1, pt2, E, K)
-    distances.append(distance)
+    # Calculate epipolar distance for each matched point
+    distances = []
+    for m in good_matches:
+        pt1 = keypoints[i][m.queryIdx].pt
+        pt2 = keypoints[i + 1][m.trainIdx].pt
+        distance = calculate_epipolar_distance(pt1, pt2, E)
+        distances.append(distance)
+    all_distances.append(distances)
 
-# Convert distances to numpy array for easier statistical analysis
-distances = np.array(distances)
+    # Convert distances to numpy array for easier statistical analysis
+    distances = np.array(distances)
 
-# Calculate summary statistics
-mean_distance = np.mean(distances)
-std_distance = np.std(distances)
-max_distance = np.max(distances)
-min_distance = np.min(distances)
+    # Calculate summary statistics
+    mean_distance = np.mean(distances)
+    std_distance = np.std(distances)
+    max_distance = np.max(distances)
+    min_distance = np.min(distances)
 
-# Print out the statistics
-print(f"Mean Epipolar Distance: {mean_distance}")
-print(f"Standard Deviation of Epipolar Distance: {std_distance}")
-print(f"Max Epipolar Distance: {max_distance}")
-print(f"Min Epipolar Distance: {min_distance}")
+    # Print out the statistics
+    print(f"Mean Epipolar Distance: {mean_distance}")
+    print(f"Standard Deviation of Epipolar Distance: {std_distance}")
+    print(f"Max Epipolar Distance: {max_distance}")
+    print(f"Min Epipolar Distance: {min_distance}")
 
-# Filter distances to exclude values outside of 3 standard deviations
-distances_filtered = distances[np.abs(distances - mean_distance) <= 3 * std_distance]
+    # Filter distances to exclude values outside of 3 standard deviations
+    distances_filtered = distances[np.abs(distances - mean_distance) <= 3 * std_distance]
 
-# Save the images with keypoints
-img1_kp = cv2.drawKeypoints(img1_undistorted, keypoints1, None, color=(0, 255, 0))
-img2_kp = cv2.drawKeypoints(img2_undistorted, keypoints2, None, color=(0, 255, 0))
+    # Save the images with keypoints
+    img1_kp = cv2.drawKeypoints(imgs_undist[i], keypoints[i], None, color=(0, 255, 0))
+    img2_kp = cv2.drawKeypoints(imgs_undist[i + 1], keypoints[i + 1], None, color=(0, 255, 0))
+    all_img_kp_pairs.append((img1_kp, img2_kp))
 
-cv2.imwrite("mini_project_2/exercise_9_2_data/frame1_keypoints.png", img1_kp)
-cv2.imwrite("mini_project_2/exercise_9_2_data/frame2_keypoints.png", img2_kp)
 
-# Draw matches between the keypoints in img1 and img2
-img_matches = cv2.drawMatches(img1_undistorted, keypoints1, img2_undistorted, keypoints2, good_matches, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+    # Draw matches between the keypoints in img1 and img2
+    img_matches = cv2.drawMatches(imgs_undist[i], keypoints[i], imgs_undist[i + 1], keypoints[i + 1], good_matches, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
 
-# Save the image with matched keypoints
-cv2.imwrite("mini_project_2/exercise_9_2_data/frame_matches.png", img_matches)
+    # Save the image with matched keypoints
+    cv2.imwrite("mini_project_2/exercise_9_2_data/frame_matches.png", img_matches)
 
-# Save the histogram of the epipolar distances (filtered) as a PNG
-plt.hist(distances_filtered, bins=20)
-plt.xlabel('Epipolar Distance')
-plt.ylabel('Frequency')
-plt.title('Histogram of Epipolar Distances (Filtered)')
+    # Save the histogram of the epipolar distances (filtered) as a PNG
+    plt.hist(distances_filtered, bins=20)
+    plt.xlabel('Epipolar Distance')
+    plt.ylabel('Frequency')
+    plt.title('Histogram of Epipolar Distances (Filtered)')
 
-# Save as PNG instead of showing it
-plt.savefig("mini_project_2/exercise_9_2_data/epipolar_distance_histogram_filtered.png")
+    # Save as PNG instead of showing it
+    # plt.savefig("mini_project_2/exercise_9_2_data/epipolar_distance_histogram_filtered.png")
 
-# Decompose the essential matrix to get relative rotation and translation
-_, R, t, _ = cv2.recoverPose(E, pts1, pts2, K)
+    # Decompose the essential matrix to get relative rotation and translation
+    _, R, t, _ = cv2.recoverPose(E, pts1, pts2, K)
+    all_R_matrices.append(R)
+    all_t_vectors.append(t)
 
-# Print the relative motion (rotation and translation)
-print("\nRelative Motion:")
-print(f"Rotation Matrix (R):\n{R}")
-print(f"Translation Vector (t):\n{t}")
-
+    # Print the relative motion (rotation and translation)
+    print("\nRelative Motion:")
+    print(f"Rotation Matrix (R):\n{R}")
+    print(f"Translation Vector (t):\n{t}")
 
 ################# Exercise 9.3 #################
 
 map = Map()
 map.camera_matrix = K
-
-imgs = [img1_undistorted, img2_undistorted]
-tfs = [(np.eye(3), np.zeros((3, 1))), (R, t)]
-proj_mats = []
 cams = []
+proj_mats = []
 
-for i, (img, (R_i, t_i)) in enumerate(zip(imgs, tfs), start=1):
-    cam = TrackedCamera(R=R_i, t=t_i, frame_id=i, frame=img, camera_id=i)
+# Add first camera at identity pose
+R0 = np.eye(3)
+t0 = np.zeros((3, 1))
+cam0 = TrackedCamera(R=R0, t=t0, frame_id=0, frame=imgs_undist[0], camera_id=None)
+cam0 = map.add_camera(cam0)  # Get assigned camera_id
+cams.append(cam0)
+proj_mats.append(K @ np.hstack((R0, t0)))
+
+for i in range(1, num_imgs):
+    img = imgs_undist[i]
+    R = all_R_matrices[i - 1]
+    t = all_t_vectors[i - 1]
+    
+    cam = TrackedCamera(R=R, t=t, frame_id=i, frame=img, camera_id=None)
+    cam = map.add_camera(cam)  # Get assigned camera_id
     cams.append(cam)
-    map.add_camera(cam)
     
-    # Compute the projection matrix P = K * [R | t] (4x3)
-    # K: intrinsic matrix, R: rotation matrix, t: translation vector
-    proj_mats.append(K @ np.hstack((R_i, t_i)))
-
-# Flatten and transpose 2D points for triangulation (shape: 2 x N)
-pts_flat = [pts.reshape(-1, 2).T for pts in (pts1, pts2)]
-
-# Triangulate 3D points in homogeneous coordinates (4 x N)
-# * unpacks pts_flat into separate arguments, it is NOT a pointer
-points_4d = cv2.triangulatePoints(proj_mats[0], proj_mats[1], *pts_flat)
-# Convert from homogeneous (x, y, z, w)
-# to Euclidean (N, 3) 3D points (x/w, y/w, z/w)
-points_3d = (points_4d[:3] / points_4d[3]).T
-
-for i, pt3d in enumerate(points_3d):
-    # Create a tracked point and add it to the map
-    tracked_point = TrackedPoint(
-        point=pt3d,
-        descriptor=descriptors1[good_matches[i].queryIdx],
-        color=None,
-        feature_id=good_matches[i].queryIdx,
-        point_id=i + 1
-    )
-    map.add_point(tracked_point)
+    proj_mats.append(K @ np.hstack((R, t)))
     
-    # Create and store observations for each camera
-    for cam, pts in zip(cams, (pts1, pts2)):
-        obs = type('Observation', (), {})()
-        obs.camera_id = cam.camera_id
-        obs.point_id = tracked_point.point_id
-        obs.image_coordinates = pts[i, 0]
-        map.observations.append(obs)
+    good_matches = all_good_matches[i - 1]
+    pts1, pts2 = all_pts_pairs[i - 1]
+    if pts1.shape[0] < 5:
+        print(f"Not enough points for triangulation between frames {i-1} and {i}, skipping.")
+        continue
+    
+    pts_flat = [pts.reshape(-1, 2).T for pts in (pts1, pts2)]
+    points_4d = cv2.triangulatePoints(proj_mats[i - 1], proj_mats[i], *pts_flat)
+    points_3d = (points_4d[:3] / points_4d[3]).T
+    
+    for j, pt3d in enumerate(points_3d):
+        tracked_point = TrackedPoint(
+            point=pt3d,
+            descriptor=descriptors[i - 1][good_matches[j].queryIdx],
+            color=None,
+            feature_id=good_matches[j].queryIdx,
+            point_id=None
+        )
+        tracked_point = map.add_point(tracked_point)
+        
+        # Use the correct camera_id from cams[-2] and cams[-1]
+        for cam_obj, pts in zip([cams[-2], cams[-1]], [pts1, pts2]):
+            obs = type('Observation', (), {})()
+            obs.camera_id = cam_obj.camera_id  # Use assigned camera_id
+            obs.point_id = tracked_point.point_id
+            obs.image_coordinates = pts[j, 0]
+            map.observations.append(obs)
+        
+        # print(f"3D Point {tracked_point.point_id}")
+
+
         
 # Calculate reprojection error
-# reprojection_errors = []
-
-# # Iterate over all the tracked points
-# for i, pt3d in enumerate(points_3d):
-#     # Project the 3D point back to image coordinates for both cameras
-#     for cam, pts in zip(cams, (pts1, pts2)):
-#         # Get the projection matrix for the current camera
-#         P = K @ np.hstack((cam.R, cam.t))  # P = K * [R | t]
-        
-#         # Project the 3D point (homogeneous coordinates)
-#         pt_3d_hom = np.append(pt3d, 1)  # Convert to homogeneous coordinates (x, y, z, 1)
-#         pt_projected_hom = P @ pt_3d_hom  # Project 3D point
-
-#         # Convert back to non-homogeneous image coordinates
-#         pt_projected = pt_projected_hom[:2] / pt_projected_hom[2]
-
-#         # Calculate the reprojection error as the Euclidean distance between projected and observed point
-#         pt_observed = pts[i, 0]  # Get the observed point from the matched keypoints
-#         reprojection_error = np.linalg.norm(pt_projected - pt_observed)
-
-#         reprojection_errors.append(reprojection_error)
-
-# # Calculate summary statistics of the reprojection errors (before filtering)
-# plot_histogram(reprojection_errors, "Reprojection Error", "Reprojection Error", "Density",
-#                "reprojection_error_histogram.png", cut_outliers=3, show=False, save=True, tight=True)
-
 reprojection_errors, total_reprojection_error = map.calculate_reprojection_error()
 
 print("\nReprojection Error Statistics (Before Bundle Adjustment):")
 print(f"Total Reprojection Error: {total_reprojection_error}")
-print(f"Number of Observations: {len(reprojection_errors)}")
+
 
 plot_histogram(reprojection_errors,
                title_and_xlabel="Reprojection Error Distribution (Before Bundle Adjustment)",
@@ -306,7 +345,7 @@ reprojection_errors, total_reprojection_error = map.calculate_reprojection_error
 
 print("\nReprojection Error Statistics (After Bundle Adjustment):")
 print(f"Total Reprojection Error: {total_reprojection_error}")
-print(f"Number of Observations: {len(reprojection_errors)}")
+
 
 plot_histogram(reprojection_errors,
                title_and_xlabel="Reprojection Error Distribution (After Bundle Adjustment)",
@@ -321,10 +360,16 @@ reprojection_errors, total_reprojection_error = map.calculate_reprojection_error
 
 print(f"\nReprojection Error Statistics (After Cutting μ \u00B1 3\u03C3 Observations):")
 print(f"Total Reprojection Error: {total_reprojection_error}")
-print(f"Number of Observations: {len(reprojection_errors)}")
 
 plot_histogram(reprojection_errors,
                title_and_xlabel="Reprojection Error Distribution (After Cutting μ \u00B1 3\u03C3 Observations)",
                ylabel="Density", filename="", cut_outliers=False, show=False, save=False, tight=True)
+
+
+# now lets print some stats about the map like how many images and cameras and total points etc.
+print(f"\nMap Statistics:")
+print(f"Number of Images: {len(map.cameras)}")
+print(f"Number of Points: {len(map.points)}")
+print(f"Number of Observations: {len(reprojection_errors)}")
 
 plt.show()

@@ -30,6 +30,7 @@ class Map():
 
     def add_point(self, point: TrackedPoint) -> TrackedPoint:
         point.point_id = self.increment_id()
+        # print("Map point id: %d" % point.point_id)
         self.points.append(point)
         return point
 
@@ -105,9 +106,9 @@ class Map():
             dy = t[1] - observation.image_coordinates[1]
             sqerror = np.abs(dx*dx) + np.abs(dy*dy)
             errors.append(sqerror)
-            if sqerror > threshold:
-                print("high reprojection error: %f" % sqerror)
-                print(observation)
+            # if sqerror > threshold:
+                # print("high reprojection error: %f" % sqerror)
+                # print(observation)
             total_error += sqerror
 
         return errors, total_error
