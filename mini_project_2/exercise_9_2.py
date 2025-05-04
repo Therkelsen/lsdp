@@ -149,8 +149,26 @@ imgs_undist = []
 keypoints = []
 descriptors = []
 
+bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
+all_matches = []
+all_good_matches = []
+all_pts_pairs = []
+all_essential_matrices = []
+all_masks = []
+all_distances = []
+all_img_kp_pairs = []
+all_img_matches = []
+all_R_matrices = []
+all_t_vectors = []
+
+map = Map()
+map.camera_matrix = K
+cams = []
+proj_mats = []
+
 print(f"Running VSLAM algorithm on {num_imgs} images...")
 for i in range(num_imgs):
+    print("\n===========================")
     print(f"\nPre-processing frame {i+1} out of {num_imgs}...")
     # Load the image
     print(f"Loading image {i}...")
@@ -167,47 +185,45 @@ for i in range(num_imgs):
     kp, des = feature_detector.detectAndCompute(img_undist, None)
     keypoints.append(kp)
     descriptors.append(des)
+    
+    if i == 0:
+        # Add first camera at identity pose
+        R0 = np.eye(3)
+        t0 = np.zeros((3, 1))
+        cam0 = TrackedCamera(R=R0, t=t0, frame_id=0, frame=imgs_undist[0], camera_id=None)
+        cam0 = map.add_camera(cam0)  # Get assigned camera_id
+        cams.append(cam0)
+        proj_mats.append(K @ np.hstack((R0, t0)))
+        # Two images are needed for everything following
+        continue
+    if i == num_imgs:
+        # Stupid indexing
+        break
+    
+    print(f"\nProcessing frame pair {i} out of {num_imgs - 1} total pairs ({num_imgs} images)...")
 
-
-bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
-all_matches = []
-all_good_matches = []
-all_pts_pairs = []
-all_essential_matrices = []
-all_masks = []
-all_distances = []
-all_img_kp_pairs = []
-all_img_matches = []
-all_R_matrices = []
-all_t_vectors = []
-
-for i in range(num_imgs - 1):
-    print(f"\nProcessing frame pair {i+1} out of {num_imgs/2} total pairs ({num_imgs} images)...")
-    # Match descriptors using Brute-Force Matcher
-    print(f"Matching descriptors between frames {i} and {i + 1}...")
-    matches = bf.knnMatch(descriptors[i], descriptors[i + 1], k=2)
+    # Match descriptors between previous and current frame
+    print(f"Matching descriptors between frames {i-1} and {i}...")
+    matches = bf.knnMatch(descriptors[i - 1], descriptors[i], k=2)
     all_matches.append(matches)
 
     # Apply Lowe's ratio test to filter matches
     good_matches = []
     for m, n in matches:
-        # Lowe's ratio test threshold
         if m.distance < 0.75 * n.distance:
-            good_matches.append(m)            
+            good_matches.append(m)
     all_good_matches.append(good_matches)
 
     # Get the points from the good matches
-    pts1 = np.float32([keypoints[i][m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-    pts2 = np.float32([keypoints[i + 1][m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+    pts1 = np.float32([keypoints[i - 1][m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+    pts2 = np.float32([keypoints[i][m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
     all_pts_pairs.append((pts1, pts2))
 
-    # Estimate the essential matrix using the camera intrinsic matrix
-    # Estimate the essential matrix using RANSAC for robustness
     if len(good_matches) < 5:
-        print(f"Not enough good matches between frames {i} and {i+1}, skipping.")
+        print(f"Not enough good matches between frames {i-1} and {i}, skipping.")
         continue
-    
-    print(f"Estimating essential matrix between frames {i} and {i + 1}...")
+
+    print(f"Estimating essential matrix between frames {i-1} and {i}...")
     E, mask = cv2.findEssentialMat(pts1, pts2, K, method=cv2.RANSAC, prob=0.999, threshold=1.0)
     all_essential_matrices.append(E)
     all_masks.append(mask)
@@ -215,77 +231,51 @@ for i in range(num_imgs - 1):
     # Calculate epipolar distance for each matched point
     distances = []
     for m in good_matches:
-        pt1 = keypoints[i][m.queryIdx].pt
-        pt2 = keypoints[i + 1][m.trainIdx].pt
+        pt1 = keypoints[i - 1][m.queryIdx].pt
+        pt2 = keypoints[i][m.trainIdx].pt
         distance = calculate_epipolar_distance(pt1, pt2, E)
         distances.append(distance)
     all_distances.append(distances)
 
-    # Convert distances to numpy array for easier statistical analysis
     distances = np.array(distances)
-
-    # Calculate summary statistics
     mean_distance = np.mean(distances)
     std_distance = np.std(distances)
     max_distance = np.max(distances)
     min_distance = np.min(distances)
 
-    # Print out the statistics
     print(f"Mean Epipolar Distance: {mean_distance}")
     print(f"Standard Deviation of Epipolar Distance: {std_distance}")
     print(f"Max Epipolar Distance: {max_distance}")
     print(f"Min Epipolar Distance: {min_distance}")
 
-    # Filter distances to exclude values outside of 3 standard deviations
     distances_filtered = distances[np.abs(distances - mean_distance) <= 3 * std_distance]
 
-    # Save the images with keypoints
-    img1_kp = cv2.drawKeypoints(imgs_undist[i], keypoints[i], None, color=(0, 255, 0))
-    img2_kp = cv2.drawKeypoints(imgs_undist[i + 1], keypoints[i + 1], None, color=(0, 255, 0))
+    img1_kp = cv2.drawKeypoints(imgs_undist[i - 1], keypoints[i - 1], None, color=(0, 255, 0))
+    img2_kp = cv2.drawKeypoints(imgs_undist[i], keypoints[i], None, color=(0, 255, 0))
     all_img_kp_pairs.append((img1_kp, img2_kp))
 
-
-    # Draw matches between the keypoints in img1 and img2
-    img_matches = cv2.drawMatches(imgs_undist[i], keypoints[i], imgs_undist[i + 1], keypoints[i + 1], good_matches, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-
-    # Save the image with matched keypoints
+    img_matches = cv2.drawMatches(
+        imgs_undist[i - 1], keypoints[i - 1],
+        imgs_undist[i], keypoints[i],
+        good_matches, None,
+        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
+    )
     cv2.imwrite("mini_project_2/exercise_9_2_data/frame_matches.png", img_matches)
 
-    # Save the histogram of the epipolar distances (filtered) as a PNG
     plt.hist(distances_filtered, bins=20)
     plt.xlabel('Epipolar Distance')
     plt.ylabel('Frequency')
     plt.title('Histogram of Epipolar Distances (Filtered)')
-
-    # Save as PNG instead of showing it
     # plt.savefig("mini_project_2/exercise_9_2_data/epipolar_distance_histogram_filtered.png")
 
-    # Decompose the essential matrix to get relative rotation and translation
     _, R, t, _ = cv2.recoverPose(E, pts1, pts2, K)
     all_R_matrices.append(R)
     all_t_vectors.append(t)
 
-    # Print the relative motion (rotation and translation)
     print("\nRelative Motion:")
     print(f"Rotation Matrix (R):\n{R}")
     print(f"Translation Vector (t):\n{t}")
 
-################# Exercise 9.3 #################
-
-map = Map()
-map.camera_matrix = K
-cams = []
-proj_mats = []
-
-# Add first camera at identity pose
-R0 = np.eye(3)
-t0 = np.zeros((3, 1))
-cam0 = TrackedCamera(R=R0, t=t0, frame_id=0, frame=imgs_undist[0], camera_id=None)
-cam0 = map.add_camera(cam0)  # Get assigned camera_id
-cams.append(cam0)
-proj_mats.append(K @ np.hstack((R0, t0)))
-
-for i in range(1, num_imgs):
     img = imgs_undist[i]
     R = all_R_matrices[i - 1]
     t = all_t_vectors[i - 1]
@@ -326,7 +316,7 @@ for i in range(1, num_imgs):
         
         # print(f"3D Point {tracked_point.point_id}")
 
-
+print(f"\nDone processing {num_imgs} images and triangulating points.")
         
 # Calculate reprojection error
 reprojection_errors, total_reprojection_error = map.calculate_reprojection_error()

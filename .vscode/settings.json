@@ -1,5 +1,26 @@
 {
     "cSpell.words": [
-        "orthomosaic"
+        "axvline",
+        "coeffs",
+        "Diaconis",
+        "epipolar",
+        "Epipolar",
+        "figsize",
+        "hstack",
+        "keypoints",
+        "Keypoints",
+        "linestyle",
+        "miniproject",
+        "orthomosaic",
+        "RANSAC",
+        "reprojection",
+        "Reprojection",
+        "undist",
+        "undistort",
+        "Undistort",
+        "Undistorting",
+        "VSLAM",
+        "xlabel",
+        "ylabel"
     ]
 }
