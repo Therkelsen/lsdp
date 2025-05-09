@@ -3,10 +3,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from mpl_toolkits.mplot3d import Axes3D
 import csv
 import cv2
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import shutil
 import time as tm
+import utm
 
 import sys
 sys.path.append("mini_project_2/Data for miniproject on visual odometry/2024")
@@ -14,6 +17,15 @@ sys.path.append("mini_project_2/Data for miniproject on visual odometry/2024")
 from Map import Map  # type: ignore
 from TrackedCamera import TrackedCamera  # type: ignore
 from TrackedPoint import TrackedPoint  # type: ignore
+
+
+def create_output_dir(path):
+    # If the folder exists, delete it
+    if os.path.exists(path):
+        shutil.rmtree(path)
+
+    # Re-create the folder
+    os.makedirs(path)
 
 
 def load_single_sequence(folder_name, sequences_path):
@@ -113,6 +125,17 @@ def match_and_extract_points(descriptors1, descriptors2, keypoints1, keypoints2,
 def convert_to_absolute_transformations(rotations, translations):
     """
     Converts relative rotations and translations into absolute transformations.
+
+    For each step i:
+        R_abs[i] = R_abs[i-1] dot R_rel[i]
+        t_abs[i] = R_abs[i]   dot t_rel[i] + t_abs[i-1]
+
+    Where:
+        - @ indicates matrix multiplication
+        - R_abs[i]: Absolute rotation at step i
+        - t_abs[i]: Absolute translation at step i
+        - R_rel[i]: Relative rotation from i-1 to i
+        - t_rel[i]: Relative translation from i-1 to i
     """
     filtered_R = [R for R in rotations if R is not None]
     filtered_t = [t.flatten() for t in translations if t is not None]
@@ -190,107 +213,110 @@ def parse_value(val):
             return val.strip()
 
 
-def visualize_camera_trajectory(all_t_vectors_relative, sequence_ids, lat_lon_alt=None, show=False, save=False, tight=True):
+def visualize_camera_trajectory(sequence_ids, translation_vectors=None, lat_lon_alt=None, points_3d=None,
+                                 show=False, save=False, tight=True):
     """
     Visualize the camera trajectory over time, coloring points by sequence ID and lines by time (gradient).
     The camera trajectory and GPS coordinates will be plotted in two separate figures.
     """
-    if not all_t_vectors_relative or not sequence_ids:
+    if (not translation_vectors and not lat_lon_alt) or not sequence_ids:
         print("Empty input.")
         return
 
-    flat_ids = sequence_ids
-    if len(flat_ids) != len(all_t_vectors_relative):
-        print(f"[Error] Mismatch: {len(flat_ids)} IDs vs {len(all_t_vectors_relative)} vectors")
-        return
-
-    sequence_dict = defaultdict(list)
-    for i, sid in enumerate(flat_ids):
-        if all_t_vectors_relative[i] is not None and all_t_vectors_relative[i].shape[0] == 3:
-            sequence_dict[sid].append(i)
-
     colors = ['r', 'b', 'g', 'c', 'm', 'y', 'k']
+    flat_ids = sequence_ids
 
-    # Gather valid positions and their sequence ids
-    valid_indices = [i for i, t in enumerate(all_t_vectors_relative) if t is not None and t.shape[0] == 3]
-    camera_positions = np.array([all_t_vectors_relative[i].flatten() for i in valid_indices])
-    camera_seq_ids = [flat_ids[i] for i in valid_indices]
+    # Build consistent color mapping across both plots
+    unique_ids = sorted(set(flat_ids))
+    seqid_to_color = {sid: colors[i % len(colors)] for i, sid in enumerate(unique_ids)}
+    point_colors_all = [seqid_to_color[sid] for sid in flat_ids]
 
-    # Assign a color to each sequence id
-    seqid_to_color = {}
-    for idx, sid in enumerate(sorted(set(camera_seq_ids))):
-        seqid_to_color[sid] = colors[idx % len(colors)]
-    point_colors = [seqid_to_color[sid] for sid in camera_seq_ids]
+    fig = plt.figure(figsize=(18, 9))
+    ax1 = fig.add_subplot(121, projection='3d')
+    ax2 = fig.add_subplot(122, projection='3d')
 
-    # Plotting Camera Trajectory (Translations)
-    fig1 = plt.figure(figsize=(10, 7))
-    ax1 = fig1.add_subplot(111, projection='3d')
+    if translation_vectors:
+        valid_indices = [i for i, t in enumerate(translation_vectors)
+                         if t is not None and t.shape[0] == 3]
+        camera_positions = np.array([translation_vectors[i].flatten() for i in valid_indices])
+        camera_seq_ids = [flat_ids[i] for i in valid_indices]
+        point_colors = [seqid_to_color[sid] for sid in camera_seq_ids]
 
-    # 1. Scatter: Each point colored by sequence
-    scatter = ax1.scatter(camera_positions[:, 0], camera_positions[:, 1], camera_positions[:, 2],
-                          c=point_colors, label="Trajectory Points", s=20)
+        scatter = ax1.scatter(camera_positions[:, 0], camera_positions[:, 1], camera_positions[:, 2],
+                              c=point_colors, label="Trajectory Points", s=20)
 
-    # 2. Lines: Gradient color by time/frame index
-    from matplotlib import cm
-    times = np.linspace(0, 1, len(camera_positions))
-    cmap = cm.get_cmap('viridis')
-    for i in range(1, len(camera_positions)):
-        seg = np.stack([camera_positions[i-1], camera_positions[i]])
-        ax1.plot(seg[:, 0], seg[:, 1], seg[:, 2],
-                 color=cmap(times[i]), alpha=0.7, linewidth=2)
+        from matplotlib import cm
+        times = np.linspace(0, 1, len(camera_positions))
+        cmap = cm.get_cmap('viridis')
+        for i in range(1, len(camera_positions)):
+            seg = np.stack([camera_positions[i-1], camera_positions[i]])
+            ax1.plot(seg[:, 0], seg[:, 1], seg[:, 2],
+                     color=cmap(times[i]), alpha=0.7, linewidth=2)
 
-    # Add legend for sequence colors
-    import matplotlib.patches as mpatches
-    legend_handles = [mpatches.Patch(color=seqid_to_color[sid], label=f"Sequence {sid}") for sid in sorted(seqid_to_color)]
-    ax1.legend(handles=legend_handles, loc='best')
+        legend_handles = [mpatches.Patch(color=seqid_to_color[sid], label=f"Sequence {sid}")
+                          for sid in unique_ids]
+        ax1.legend(handles=legend_handles, loc='best')
+        ax1.set_xlabel("X (m)")
+        ax1.set_ylabel("Y (m)")
+        ax1.set_zlabel("Z (m)")
+        ax1.view_init(elev=90, azim=-90)
+        ax1.set_title("Camera Trajectories (Translations)")
 
-    # Colorbar for time/frame index
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=len(camera_positions)-1))
-    sm.set_array([])
-    fig1.colorbar(sm, ax=ax1, label='Time / Frame Index')
+        max_range = np.ptp(camera_positions, axis=0).max()
+        ax1.set_xlim([camera_positions[:, 0].min(), camera_positions[:, 0].min() + max_range])
+        ax1.set_ylim([camera_positions[:, 1].min(), camera_positions[:, 1].min() + max_range])
+        ax1.set_zlim([camera_positions[:, 2].min(), camera_positions[:, 2].min() + max_range])
+    elif points_3d:
+        points_3d = np.array(points_3d)
 
-    ax1.set_xlabel("X (m)")
-    ax1.set_ylabel("Y (m)")
-    ax1.set_zlabel("Z (m)")
-    ax1.view_init(elev=90, azim=-90)
-    plt.title("Camera Trajectories (Translations)")
+        for i in range(1, len(points_3d)):
+            ax1.plot([points_3d[i-1, 0], points_3d[i, 0]],
+                     [points_3d[i-1, 1], points_3d[i, 1]],
+                     [points_3d[i-1, 2], points_3d[i, 2]],
+                     c=plt.cm.viridis(i / len(points_3d)), alpha=0.6)
 
-    # Set equal scaling for all axes
-    max_range = np.ptp(camera_positions, axis=0).max()
-    ax1.set_xlim([camera_positions[:, 0].min(), camera_positions[:, 0].min() + max_range])
-    ax1.set_ylim([camera_positions[:, 1].min(), camera_positions[:, 1].min() + max_range])
-    ax1.set_zlim([camera_positions[:, 2].min(), camera_positions[:, 2].min() + max_range])
+        # Use same color map as sequence_ids
+        points_3d_colors = point_colors_all[:len(points_3d)]
+        ax1.scatter(points_3d[:len(points_3d_colors), 0],
+                    points_3d[:len(points_3d_colors), 1],
+                    points_3d[:len(points_3d_colors), 2],
+                    c=points_3d_colors, marker='o', label="X/Y/Z Map Points", s=40)
 
-    # Plotting GPS Coordinates (Lat, Lon, Alt)
+        ax1.set_xlabel("X")
+        ax1.set_ylabel("Y")
+        ax1.set_zlabel("Z")
+        ax1.view_init(elev=90, azim=-90)
+        ax1.set_title("Map (X/Y/Z)")
+        ax1.legend()
+
     if lat_lon_alt:
         lat_lon_alt = np.array(lat_lon_alt)
+        utm_coords = lat_lon_alt.copy()
+        for i, (lat, lon, _) in enumerate(utm_coords):
+            x, y, _, _ = utm.from_latlon(lat, lon)
+            utm_coords[i, 0] = x
+            utm_coords[i, 1] = y
 
-        fig2 = plt.figure(figsize=(10, 7))
-        ax2 = fig2.add_subplot(111, projection='3d')
-        
-        # Plotting the GPS trajectory with colored lines between them
-        for i in range(1, len(lat_lon_alt)):
-            ax2.plot([lat_lon_alt[i-1, 0], lat_lon_alt[i, 0]],
-                     [lat_lon_alt[i-1, 1], lat_lon_alt[i, 1]],
-                     [lat_lon_alt[i-1, 2], lat_lon_alt[i, 2]],
-                     c=plt.cm.viridis(i / len(lat_lon_alt)), alpha=0.6)
+        for i in range(1, len(utm_coords)):
+            ax2.plot([utm_coords[i-1, 0], utm_coords[i, 0]],
+                     [utm_coords[i-1, 1], utm_coords[i, 1]],
+                     [utm_coords[i-1, 2], utm_coords[i, 2]],
+                     c=plt.cm.viridis(i / len(utm_coords)), alpha=0.6)
 
-        # Assign sequence-based colors to GPS points (assume same order as sequence_ids)
-        gps_point_colors = [seqid_to_color.get(flat_ids[i], 'k') for i in range(min(len(lat_lon_alt), len(flat_ids)))]
+        # Use same color map as sequence_ids
+        gps_point_colors = point_colors_all[:len(utm_coords)]
+        ax2.scatter(utm_coords[:len(gps_point_colors), 0],
+                    utm_coords[:len(gps_point_colors), 1],
+                    utm_coords[:len(gps_point_colors), 2],
+                    c=gps_point_colors, marker='o', label="UTM X/UTM Y/Alt Points", s=40)
 
-        ax2.scatter(lat_lon_alt[:len(gps_point_colors), 0], lat_lon_alt[:len(gps_point_colors), 1], lat_lon_alt[:len(gps_point_colors), 2], 
-                    c=gps_point_colors, marker='o', label="Lat/Lon/Alt Points", s=40)
-
-        ax2.set_xlabel("Latitude")
-        ax2.set_ylabel("Longitude")
+        ax2.set_xlabel("UTM X")
+        ax2.set_ylabel("UTM Y")
         ax2.set_zlabel("Altitude (m)")
-        plt.title("GPS Coordinates (Lat/Lon/Alt)")
-
         ax2.view_init(elev=90, azim=-90)
-
+        ax2.set_title("UTM (X/Y/Alt)")
         ax2.legend()
 
-    # Show or save the plots
     if tight:
         plt.tight_layout()
 
@@ -300,6 +326,7 @@ def visualize_camera_trajectory(all_t_vectors_relative, sequence_ids, lat_lon_al
 
     if show:
         plt.show()
+
 
 
 def plot_histogram(data, title_and_xlabel, ylabel, filename, cut_outliers=False, show=False, save=False, tight=True):
@@ -348,6 +375,13 @@ if __name__ == "__main__":
     start_time = tm.time()
 
     sequences_path = "mini_project_2/saved_sequences"
+    
+    output_path = "mini_project_2/output/"
+    kp_path = os.path.join(output_path, "keypoints/")
+    match_path = os.path.join(output_path, "matches/")
+    # create_output_dir(kp_path)
+    # create_output_dir(match_path)
+    
     all_sequences, all_logs = load_sequences(sequences_path)
 
     print(f"Loaded {len(all_sequences)} sequences.")
@@ -456,6 +490,12 @@ if __name__ == "__main__":
         # Draw keypoints on the undistorted images for visualization
         img1_kp = cv2.drawKeypoints(all_imgs_undist[i - 1], all_keypoints[i - 1], None, color=(0, 255, 0))
         img2_kp = cv2.drawKeypoints(all_imgs_undist[i], all_keypoints[i], None, color=(0, 255, 0))
+        
+        
+        
+        # cv2.imwrite(f"{kp_path}frame{i-1}_keypoints.png", img1_kp)
+        # cv2.imwrite(f"{kp_path}frame{i}_keypoints.png", img2_kp)
+        
         all_img_kp_pairs[i - 1] = (img1_kp, img2_kp)
 
         # Draw matches between the two frames for visualization
@@ -465,6 +505,8 @@ if __name__ == "__main__":
             good_matches, None,
             flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
         )
+        
+        # cv2.imwrite(f"{match_path}matches_btwn_frame{i-1}_and_{i}.png", img_matches)
 
         ############### Exercise 9.2.4 ###############
         # Recover the relative camera rotation and translation
@@ -510,34 +552,6 @@ if __name__ == "__main__":
                 obs.image_coordinates = pts[j, 0]
                 map.observations.append(obs)
 
-    ############### Exercise 9.4.4 ###############
-    # Convert relative rotations and translations to absolute camera poses
-    absolute_R, absolute_t = convert_to_absolute_transformations(all_R_matrices_relative, all_t_vectors_relative)
-
-    # Ensure absolute_t has the same length as the number of frames/IDs
-    if len(absolute_t) < len(flattened_sequences):
-        absolute_t = [np.zeros(3)] + absolute_t
-
-    print(f"\nDone processing {num_imgs} images and triangulating points.")
-
-    all_sequence_ids = extract_columns_from_folder("mini_project_2/saved_sequences/", ["sequence_id"])
-    all_gps_coordinates = extract_columns_from_folder("mini_project_2/saved_sequences/", ["latitude", "longitude", "altitude"])
-
-    visualize_camera_trajectory(absolute_t[:num_imgs], all_sequence_ids[:num_imgs], all_gps_coordinates[:num_imgs], show=False)
-
-    all_distances_flat = np.concatenate(all_distances) if all_distances else np.array([])
-
-    plot_histogram(
-        all_distances_flat,
-        title_and_xlabel="Epipolar Distance (All Pairs)",
-        ylabel="Density",
-        filename="",
-        cut_outliers=3,
-        show=False,
-        save=False,
-        tight=True
-    )
-
     ############### Exercise 9.3.3 ###############
     reprojection_errors, total_reprojection_error = map.calculate_reprojection_error()
     print(f"\nTotal Reprojection Error: {total_reprojection_error}")
@@ -566,6 +580,37 @@ if __name__ == "__main__":
     plot_histogram(reprojection_errors,
                 title_and_xlabel="Reprojection Error Distribution (After Cutting μ \u00B1 3\u03C3 Observations)",
                 ylabel="Density", filename="", cut_outliers=False, show=False, save=False, tight=True)
+    
+    ############### Exercise 9.4.4 ###############
+    # Convert relative rotations and translations to absolute camera poses
+    absolute_R, absolute_t = convert_to_absolute_transformations(all_R_matrices_relative, all_t_vectors_relative)
+    
+    # points_array = [tp.point for tp in map.points]
+
+    # # Ensure absolute_t has the same length as the number of frames/IDs
+    # if len(absolute_t) < len(flattened_sequences):
+    #     absolute_t = [np.zeros(3)] + absolute_t
+
+    print(f"\nDone processing {num_imgs} images and triangulating points.")
+
+    all_sequence_ids = extract_columns_from_folder("mini_project_2/saved_sequences/", ["sequence_id"])
+    all_gps_coordinates = extract_columns_from_folder("mini_project_2/saved_sequences/", ["latitude", "longitude", "altitude"])
+
+    visualize_camera_trajectory(sequence_ids=all_sequence_ids[:num_imgs], translation_vectors=absolute_t[:num_imgs],
+                                lat_lon_alt=all_gps_coordinates[:num_imgs], show=False)
+
+    all_distances_flat = np.concatenate(all_distances) if all_distances else np.array([])
+
+    plot_histogram(
+        all_distances_flat,
+        title_and_xlabel="Epipolar Distance (All Pairs)",
+        ylabel="Density",
+        filename="",
+        cut_outliers=3,
+        show=False,
+        save=False,
+        tight=True
+    )
 
     print(f"\nMap Statistics:")
     print(f"Number of Images: {len(map.cameras)}")
